@@ -8,13 +8,17 @@ __lua__
 -- Game core consts
 --
 
-BALL_R = 2
+BALL_R = 2.25
+BALL_D = 2 * BALL_R
+BALL_D2 = BALL_D*BALL_D
 
-MOVING_COOLDOWN_FRAMES = 120
+BALL_POLE_D = BALL_R + 0.125
+BALL_POLE_D2 = BALL_POLE_D*BALL_POLE_D
+
+MOVING_COOLDOWN_FRAMES = 60
 
 ROUGH = 16
 
--- WIDTH, HEIGHT = 256, 128
 WIDTH, HEIGHT = 384 + 2*ROUGH, 192+2*ROUGH
 
 CX = WIDTH \ 2
@@ -50,12 +54,18 @@ WICKETS = {
 -- Physics consts
 --
 
-SHOT_V_MAX = 2.5
+COLLISION_CHECK_DIVISIONS = 4
+
+SHOT_V_MAX = 2
 SHOT_V_MIN = 0.125
 
 DRAG = 1 - 1/128
 DRAG_ROUGH = 1 - 1/8
 V2_STOP_THRESH = 1/1024
+
+VELOCITY_REDUCE_BALL_COLLISION = 1 - 1/64
+VELOCITY_REDUCE_POLE_COLLISION = 1 - 1/64
+VELOCITY_REDUCE_WICKET_COLLISION = 1 - 1/8
 
 BALL_STOP_RANDOM_MOVEMENT = 0.25
 
@@ -102,6 +112,7 @@ moving_cooldown = 0
 
 debug_no_draw_tops = false
 debug_draw_primitives = false
+debug_increase_shot_pointer_length = false
 
 --
 -- Utility functions
@@ -141,11 +152,208 @@ function shot_power_color()
 end
 
 --
+-- Sound
+--
+
+function play_sound_launch()
+	local strength = shot_power
+	-- TODO
+end
+
+function play_sound_ball_collision(dv2)
+	-- TODO
+end
+
+function play_sound_wicket_collision(wicket, ball)
+	local v2 = ball.vx*ball.vx + ball.vy*ball.vy
+	if wicket.pole then
+		-- TODO
+	else
+		-- TODO
+	end
+end
+
+function play_sound_score_wicket()
+	-- TODO
+end
+
+function play_sound_end_game()
+	-- TODO
+end
+
+--
+-- Physics
+--
+
+function dotpart(vx, vy, nx, ny)
+	-- From pico pool by nusan (CC4-BY-NC-SA)
+	local dot = vx*nx + vy*ny
+	vx = vx - dot*nx
+	vy = vy - dot*ny
+	return vx, vy
+end
+
+function ball_collisions()
+	-- Partially based on pico pool by nusan (CC4-BY-NC-SA)
+
+	local any_collisions = false
+
+	for idx1 = 1, #balls do
+		local b1 = balls[idx1]
+		for idx2 = idx1+1, #balls do
+			local b2 = balls[idx2]
+
+			local dx, dy, d2 = b1.x - b2.x, b1.y - b2.y
+
+			-- Prevent overflow
+			if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
+
+			if d2 and d2 <= BALL_D2 then
+				assert(d2 >= 0, 'd2=' .. d2)
+
+				local d = sqrt(d2)
+
+				-- TODO: is this right? It seems to work, but with wicket logic we needed not to divide by d
+				local push = max(0, BALL_D + 1 - d) * 0.5 / d
+				if push > 0 then
+					any_collisions = true
+
+					b1.x += dx*push
+					b1.y += dy*push
+					b2.x -= dx*push
+					b2.y -= dy*push
+
+					add(b1.collisions, {b2.x, b2.y})
+					add(b2.collisions, {b1.x, b1.y})
+
+					-- If no balls are moving, then we can skip this entirely
+					if moving_cooldown > 0 then
+
+						local nx, ny = dy / d, -dx / d
+
+						b1.vx *= VELOCITY_REDUCE_BALL_COLLISION
+						b1.vy *= VELOCITY_REDUCE_BALL_COLLISION
+						b2.vx *= VELOCITY_REDUCE_BALL_COLLISION
+						b2.vy *= VELOCITY_REDUCE_BALL_COLLISION
+
+						local dd1x, dd1y = dotpart(b1.vx, b1.vy, nx, ny)
+						local dd2x, dd2y = dotpart(b2.vx, b2.vy, nx, ny)
+
+						play_sound_ball_collision(
+							dd1x*dd1x + dd1y*dd1y + dd2x*dd2x + dd2y*dd2y
+						)
+
+						b1.vx += -dd1x + dd2x
+						b1.vy += -dd1y + dd2y
+						b2.vx += -dd2x + dd1x
+						b2.vy += -dd2y + dd1y
+					end
+				end
+			end
+		end
+	end
+
+	return any_collisions
+end
+
+function wicket_collisions()
+
+	local any_collisions = false
+
+	for ball in all(balls) do
+		local bx, by = ball.x, ball.y
+		-- for w in all(WICKETS) do
+		for wicket_idx = 1,#WICKETS do
+			local w = WICKETS[wicket_idx]
+
+			local wx = w[1]
+
+			local y_offs, vel_reduce
+			if w.pole then
+				y_offs = {0}
+				vel_reduce = VELOCITY_REDUCE_POLE_COLLISION
+			else
+				y_offs = {-5, 4}
+				vel_reduce = VELOCITY_REDUCE_WICKET_COLLISION
+			end
+
+			for y_off in all(y_offs) do
+				local wy = w[2] + y_off
+
+				local dx, dy, d2 = bx - wx, by - wy
+
+				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
+
+				if d2 and d2 <= BALL_POLE_D2 then
+					assert(d2 >= 0, 'd2=' .. d2)
+
+					local d = sqrt(d2)
+					local push = max(0, BALL_POLE_D - d)
+
+					if push > 0 then
+						any_collisions = true
+
+						add(ball.collisions, {wx, wy})
+
+						ball.x += dx*push
+						ball.y += dy*push
+
+						if moving_cooldown > 0 then
+							play_sound_wicket_collision(w, ball)
+
+							local nx, ny = dy / d, -dx / d
+
+							assert(
+								-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
+								'dx=' .. dx ..
+								',dy=' .. dy ..
+								',d2=' .. d2 ..
+								',d=' .. d ..
+								',nx=' .. nx ..
+								',ny=' .. ny
+							)
+
+							ball.vx *= vel_reduce
+							ball.vy *= vel_reduce
+
+							local vx, vy = ball.vx, ball.vy
+							local v_dot_n = vx * nx + vy * ny
+
+							ball.vx -= 2 * v_dot_n * nx
+							ball.vy -= 2 * v_dot_n * ny
+						end
+					end
+
+					if w.pole and wicket_idx == ball.last_wicket_idx + 1 then
+						score_wicket(ball)
+					end
+
+				end
+			end
+		end
+	end
+
+	return any_collisions
+end
+
+function collisions()
+	local any_collisions = wicket_collisions()
+	any_collisions = ball_collisions() or any_collisions
+	return any_collisions
+end
+
+function resolve_all_static_collisions()
+	for i=1,100 do
+		if (not collisions()) return
+	end
+	assert(false, "resolve_all_static_collisions hit iteration limit")
+end
+
+--
 -- Game
 --
 
 function reset_off_screen_balls()
-
 	while true do
 		local any_clipped = false
 
@@ -158,7 +366,7 @@ function reset_off_screen_balls()
 
 		if (not any_clipped) return
 
-		-- TODO: re-run ball collisions
+		resolve_all_static_collisions()
 	end
 end
 
@@ -179,17 +387,30 @@ function next_player()
 	camera_y = player_ball.y
 end
 
+function score_wicket(ball)
+	if ball.last_wicket_idx == #WICKETS then
+		play_sound_end_game()
+		-- TODO: finish game
+	else
+		play_sound_score_wicket()
+		ball.last_wicket_idx += 1
+	end
+end
+
 function add_ball()
 	local palette = PALETTES[#balls + 1]
 	add(balls, {
-		x=WICKETS[1][1] + 3,
-		y=WICKETS[1][2] + 3,
+		x=WICKETS[1][1] + 4,
+		y=WICKETS[1][2] + 5,
 		vx=0,
 		vy=0,
 		color=palette[8],
 		palette=palette,
 		last_wicket_idx=1,
+		collisions={},
 	})
+
+	resolve_all_static_collisions()
 end
 
 function _init()
@@ -202,7 +423,7 @@ function _init()
 	poke(0x5f36, 0x40)  -- prevent printing at bottom of screen from triggering scroll
 end
 
-function check_wicket(ball)
+function check_wickets(ball)
 	-- Note: only checks wickets, not poles
 	-- (Poles are handled through collision physics)
 
@@ -211,7 +432,7 @@ function check_wicket(ball)
 	local x, y, xp, yp, wx, wy = ball.x, ball.y, ball.x_prev, ball.y_prev, w[1], w[2]
 
 	local through = false
-	if wy - 4 <= y and y <= wy + 4 then
+	if wy - 5 <= y and y <= wy + 4 then
 		if x == wx then
 			-- In case ball is stopped exactly on wicket
 			-- (Could handle this with conditions below, but this is more mistake-proof)
@@ -222,7 +443,7 @@ function check_wicket(ball)
 			if (xp <= wx and x > wx) through = true
 		end
 	end
-	if (through) ball.last_wicket_idx += 1
+	if (through) score_wicket(ball)
 end
 
 function _update60()
@@ -232,7 +453,8 @@ function _update60()
 	while stat(30) do
 		local key = stat(31)
 		if (key == '1') debug_draw_primitives = not debug_draw_primitives
-		if (key == '2') debug_no_draw_tops = not debug_no_draw_tops
+		if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
+		if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
 	end
 
 	if op and moving_cooldown <= 0 then
@@ -247,6 +469,8 @@ function _update60()
 		player_ball.vx = v * dx
 		player_ball.vy = v * dy
 		moving_cooldown = MOVING_COOLDOWN_FRAMES
+
+		play_sound_launch()
 	end
 
 	if moving_cooldown > 0 then
@@ -255,16 +479,24 @@ function _update60()
 		moving_cooldown -= 1
 
 		-- TODO optimization: keep a list of moving balls, only iterate those
+		-- TODO optimization: when looping through each ball, make a list of close balls & wickets
+		-- (with simpler check, e.g. abs(dx)+abs(dy)), then these are the only ones that get checked for collisions
 
 		for ball in all(balls) do
 			ball.x_prev = ball.x
 			ball.y_prev = ball.y
-			ball.x += ball.vx
-			ball.y += ball.vy
+			ball.collisions = {}
 		end
 
-		-- TODO: collision physics here
-		-- TODO: collision physics needs to include pole hit check
+		for idx=1,COLLISION_CHECK_DIVISIONS do
+			for ball in all(balls) do
+				if ball.vx != 0 or ball.vy != 0 then
+					ball.x += ball.vx / COLLISION_CHECK_DIVISIONS
+					ball.y += ball.vy / COLLISION_CHECK_DIVISIONS
+				end
+			end
+			if (collisions()) moving_cooldown = MOVING_COOLDOWN_FRAMES
+		end
 
 		for ball in all(balls) do
 			if ball.vx != 0 or ball.vy != 0 then
@@ -283,16 +515,14 @@ function _update60()
 					-- TODO: Add ball spin, and make this depend on it
 					ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
 					ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-
 					ball.vx, ball.vy = 0, 0
-				else
-					moving_cooldown = MOVING_COOLDOWN_FRAMES
 				end
+				moving_cooldown = MOVING_COOLDOWN_FRAMES
 			end
 		end
 
 		for ball in all(balls) do
-			check_wicket(ball)
+			check_wickets(ball)
 		end
 
 		-- TODO: If player's ball isn't moving but another is, make camera follow that one instead
@@ -333,7 +563,10 @@ function draw_shot()
 
 	-- Draw line
 
-	line_round(x, y, x + 12*dx, y + 12*dy, shot_power_color())
+	local l = 12
+	if (debug_increase_shot_pointer_length) l = 64
+
+	line_round(x, y, x + l*dx, y + l*dy, shot_power_color())
 
 	-- Draw club
 
@@ -506,6 +739,16 @@ function _draw()
 				line(w[1], w[2] + 4, w[1], w[2] + 4, 9)
 			end
 		end
+
+		for ball in all(balls) do
+			for coll in all(ball.collisions) do
+				line_round(
+					ball.x, ball.y,
+					coll[1], coll[2],
+					11
+				)
+			end
+		end
 	end
 
 	--
@@ -531,16 +774,22 @@ function _draw()
 	-- Debug overlays
 	--
 
-	-- cursor(1, 1, 8)
-	cursor(112, 1, 8)
+	cursor(1, 1, 8)
+	-- cursor(100, 1, 8)
 	-- print('mem:' .. stat(0))
 	local cpu = stat(1)
 	-- local cpu_draw = cpu - cpu_update
 	-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
 	print(round(cpu * 100))
 
+	local player_ball = balls[player_idx]
+	print('x=' .. player_ball.x)
+	print('y=' .. player_ball.y)
+	print('vx=' .. player_ball.vx)
+	print('vy=' .. player_ball.vy)
+
 	--
-	-- Display palette
+	-- Set display palette
 	--
 
 	-- pal({[13]=139,[15]=138}, 1)
