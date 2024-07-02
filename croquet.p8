@@ -5,18 +5,18 @@ __lua__
 -- License: CC BY-NC-SA 4.0
 
 --
--- Debug options
---
-
--- DEBUG_NO_DRAW_TOPS = true
--- DEBUG_DRAW_DOTS = true
-
---
 -- Consts
 --
 
+STATUS_BAR_HEIGHT = 8
+
+ROUGH = 8
+ROUGH_FILLP = 0b0101010110101010
+-- ROUGH_COLOR = 0x34
+ROUGH_COLOR = 0x35
+
 -- WIDTH, HEIGHT = 256, 128
-WIDTH, HEIGHT = 384, 192
+WIDTH, HEIGHT = 384 + 2*ROUGH, 192+2*ROUGH
 
 CX = WIDTH \ 2
 CY = HEIGHT \ 2
@@ -37,14 +37,14 @@ WICKETS = {
 	{WIDTH - W2X, CY},
 	{WIDTH - W1X, CY},
 	{WIDTH - PX, CY, pole=true},
-	{WIDTH - W1X, CY, hidden=true},
-	{WIDTH - W2X, CY, hidden=true},
-	{WIDTH - W3X, WY},
-	{CX, CY, hidden=true},
-	{W3X, WY},
-	{W2X, CY, hidden=true},
-	{W1X, CY, hidden=true},
-	{PX, CY, pole=true, hidden=true},
+	{WIDTH - W1X, CY, reverse=true, hidden=true},
+	{WIDTH - W2X, CY, reverse=true, hidden=true},
+	{WIDTH - W3X, WY, reverse=true},
+	{CX, CY, reverse=true, hidden=true},
+	{W3X, WY, reverse=true},
+	{W2X, CY, reverse=true, hidden=true},
+	{W1X, CY, reverse=true, hidden=true},
+	{PX, CY, reverse=true, pole=true, hidden=true},
 }
 
 PALETTES = {
@@ -60,12 +60,26 @@ PALETTES = {
 	{[8]=9, [2]=4, [14]=10}, -- Orange
 }
 
+SHOT_POWER_COLORS = {1, 12, 11, 10, 9, 8}
+
 --
 -- Globals
 --
 
-camera_x = 0
+balls = {}
+
+player_idx = 1
+
+camera_x = 64
 camera_y = CY
+
+shot_angle = 0
+shot_power = 0.25
+
+moving = false
+
+debug_no_draw_tops = false
+debug_draw_primitives = false
 
 --
 -- Utility functions
@@ -79,161 +93,313 @@ function clip_num(val, minval, maxval)
 	return max(minval, min(maxval, val))
 end
 
+function sort_z(items)
+	-- Bubblesort items by z value, or y value if z is not found
+	for idx1 = 1,#items do
+		local any_swapped = false
+		for idx2 = 1,#items-1 do
+			local item1 = items[idx1]
+			local item2 = items[idx2]
+			if ((item1.z or item1.y) < (item2.z or item2.y)) then
+				items[idx1] = item2
+				items[idx2] = item1
+				any_swapped = true
+			end
+		end
+		if (not any_swapped) return
+	end
+end
+
+--
+-- Game
+--
+
+function next_player()
+	player_idx %= 6
+	player_idx += 1
+	local player_ball = balls[player_idx]
+	
+	shot_angle = 0
+	shot_power = 0.25
+	moving = false
+end
+
 function _init()
-	balls = {}
-	local idx = 1  -- DEBUG
+	local idx = 0  -- DEBUG
 	for p in all(PALETTES) do
 		idx += 1
 		add(balls, {
-			-- x=nil,
-			-- y=nil,
-			x = idx*8, -- DEBUG
-			y = 16, -- DEBUG
-			vx=0,
-			vy=0,
-			color=p[8],
-			palette=p,
+			-- x = 8 + idx*8, y = CY - 16, -- DEBUG
+			vx=0, vy=0,
+			color=p[8], palette=p,
+			last_wicket_idx=0,
 		})
 	end
+
+	cls()
+	poke(0x5F2D, 1)  -- enable keyboard
+	poke(0x5f36, 0x40)  -- prevent printing at bottom of screen from triggering scroll
 end
 
 function _update60()
 -- function _update()
 
+	while stat(30) do
+		local key = stat(31)
+		if (key == '1') debug_draw_primitives = not debug_draw_primitives
+		if (key == '2') debug_no_draw_tops = not debug_no_draw_tops
+	end
 
-	if (btn(0)) camera_x -= 2  -- left
-	if (btn(1)) camera_x += 2  -- right
-	if (btn(2)) camera_y -= 2  -- up
-	if (btn(3)) camera_y += 2  -- down
+	local player_ball, o, x = balls[player_idx], btn(4), btn(5)
+
+	if not (player_ball.x) then
+		-- TODO: check clip, and/or offer different placement options
+		player_ball.x = WICKETS[1][1] + 3
+		player_ball.y = WICKETS[1][2] + 3
+		player_ball.last_wicket_idx = 1
+	end
+
+	if moving then
+
+		-- TODO: physics here
+
+		-- TODO: camera follow whatever ball is moving, even if it's not the player's
+		camera_x = player_ball.x
+		camera_y = player_ball.y
+
+	else
+		if x then
+			if (btn(0)) camera_x -= 4  -- left
+			if (btn(1)) camera_x += 4  -- right
+			if (btn(2)) camera_y -= 4  -- up
+			if (btn(3)) camera_y += 4  -- down
+		else
+			if (btn(0)) shot_angle += 1/256  -- left
+			if (btn(1)) shot_angle -= 1/256  -- right
+			if (btn(2)) shot_power += 1/64  -- up
+			if (btn(3)) shot_power -= 1/64  -- down
+		end
+
+		shot_angle = round((shot_angle * 256) % 256) / 256
+		shot_power = clip_num(shot_power, 0, 1)
+	end
 
 	camera_x = clip_num(camera_x, 64, WIDTH-64)
-	camera_y = clip_num(camera_y, 64, HEIGHT-64)
-
-
-
-
+	camera_y = clip_num(camera_y, 64, HEIGHT-64+STATUS_BAR_HEIGHT)
 
 	cpu_update = stat(1)
 end
 
+function shot_power_color()
+	return SHOT_POWER_COLORS[clip_num(flr(shot_power * #SHOT_POWER_COLORS) + 1, 1, #SHOT_POWER_COLORS)]
+end
+
+function line_round(x1, y1, x2, y2, col)
+	line(round(x1), round(y1), round(x2), round(y2), col)
+end
+
+function draw_shot()
+	local player_ball = balls[player_idx]
+	local x, y = player_ball.x, player_ball.y
+	local dx, dy = cos(shot_angle), sin(shot_angle)
+
+	-- Draw line
+
+	line_round(x, y, x + 12*dx, y + 12*dy, shot_power_color())
+
+	-- Draw club
+
+	-- TODO: Haven't worked out a good way to draw this as solid without gaps at
+	-- some angles, so for now just draw outline
+
+	local w, l, d = 1.5, 10, 4 + 5*shot_power*shot_power
+
+	local c = {
+		{ w*dy - d*dx,     -w*dx - d*dy},
+		{ w*dy - (d+l)*dx, -w*dx - (d+l)*dy},
+		{-w*dy - (d+l)*dx,  w*dx - (d+l)*dy},
+		{-w*dy - d*dx,      w*dx - d*dy},
+	}
+
+	for idx=1,4 do
+		line_round(
+			x + c[idx][1],
+			y + c[idx][2],
+			x + c[(idx%4)+1][1],
+			y + c[(idx%4)+1][2],
+			4)
+	end
+end
+
+function draw_shot_power_meter()
+	rectfill(125, 63 - 62*shot_power, 126, 63, shot_power_color())
+	rect(124, 0, 127, 64, 0)
+end
+
 function _draw()
 
-	-- cls(3)
-	cls()
+	local player_ball, sprites, x, y = balls[player_idx], {}
+	local next_wicket = WICKETS[player_ball.last_wicket_idx + 1]
+
 	camera(camera_x - 64, camera_y - 64)
 
-	-- pal({[3]=139,[11]=138}, 1)
-	-- pal({[13]=139,[15]=138}, 1)
-
-	-- fillp(0b0101101001011010)
-	-- rectfill(0, 0, 128, 128, 0x3B)
-
-	-- Draw field
-	for y=0,(HEIGHT\16) do
-		for x=0,(WIDTH\16) do
-			fillp(0b0101101001011010)
-			if (x % 2 == 0 and y % 2 == 1) fillp(0xFFFF)
-			if (x % 2 == 1 and y % 2 == 0) fillp(0x0000)
-			-- rectfill(x*16 - 8, y*16 - 8, x*16 + 8, y*16 + 8, 0x3B)
-			rectfill(x*16 - 8, y*16 - 8, x*16 + 8, y*16 + 8, 0xDF)
+	for y=0,ceil((HEIGHT-2*ROUGH)/16) do
+		for x=0,ceil((WIDTH-2*ROUGH)/16) do
+			local fp = 0b0101101001011010
+			if (x % 2 == 0 and y % 2 == 0) fp = 0x0000
+			if (x % 2 == 1 and y % 2 == 1) fp = 0xFFFF
+			fillp(fp)
+			local off = ROUGH
+			if (ROUGH < 1) off = -8
+			rectfill(x*16 + off, y*16 + off, x*16 + 16 + off, y*16 + 16 + off, 0xDF)
 		end
+	end
+	if ROUGH > 0 then
+		fillp(ROUGH_FILLP)
+		rectfill(0, 0, WIDTH, ROUGH-1, ROUGH_COLOR)
+		rectfill(0, HEIGHT - ROUGH, WIDTH, HEIGHT, ROUGH_COLOR)
+		rectfill(0, ROUGH, ROUGH, HEIGHT - ROUGH, ROUGH_COLOR)
+		rectfill(WIDTH - ROUGH, ROUGH, WIDTH, HEIGHT - ROUGH, ROUGH_COLOR)
 	end
 	fillp()
 
-	rect(0, 0, WIDTH - 1, HEIGHT - 1, 7)
+	-- Boundary
+	if (ROUGH < 1) rect(0, 0, WIDTH - 1, HEIGHT - 1, 7)
+
+	-- Draw ball shadows
+	-- TODO: Disabled for now, it looks bad with ball palettes that use grey as their dark color
+	-- if not debug_draw_primitives then
+	-- 	for ball in all(balls) do
+	-- 		if ball.x and ball.y then
+	-- 			spr(2, ball.x - 2, ball.y - 4)
+	-- 		end
+	-- 	end
+	-- end
 
 	-- Draw wicket & pole bases
-	palt(0, false)
-	palt(3, true)
-	for w in all(WICKETS) do
-		if not w.hidden then
-			if w.pole then
-				spr(39, w[1]-3, w[2]-7)
-			else
-				local x, y = w[1]-4, w[2]-1
-				spr(17, x, y-8)
-				spr(33, x, y)
-			end
-		end
-	end
-	-- for p in all(POLES) do
-	-- 	-- spr(19, p[1]-4, p[2]-4)
-	-- 	spr(39, p[1]-3, p[2]-7)
-	-- end
-	palt()
-
-	-- TODO: draw arrow on next wicket
-
-	-- TODO: from here down, draw in Y order
-
-	-- Draw balls
-	for ball in all(balls) do
-		if ball.x and ball.y then
-			-- pal(8, ball.color)
-			pal(ball.palette)
-			spr(4, ball.x, ball.y)
-		end
-	end
-	pal()
-
-	-- Draw wicket & pole tops
-	if not DEBUG_NO_DRAW_TOPS then
+	if not debug_draw_primitives then
 		palt(0, false)
 		palt(3, true)
 		for w in all(WICKETS) do
 			if not w.hidden then
 				if w.pole then
-					spr(23, w[1]-3, w[2]-7)
+					spr(39, w[1]-3, w[2]-7)
 				else
-					local x, y = w[1]-4, w[2]-1
-					spr(18, x, y-8)
-					spr(34, x, y)
+					spr(17, w[1]-4, w[2]-9, 1, 2)
 				end
 			end
 		end
-		-- for p in all(POLES) do
-		-- 	-- spr(19, p[1]-4, p[2]-4)
-		-- 	spr(23, p[1]-3, p[2]-7)
-		-- end
 		palt()
-	end
+	end	
 
-	if DEBUG_DRAW_DOTS then
-		for w in all(WICKETS) do
-			if w.pole then
-				rectfill(w[1], w[2], w[1], w[2], 8)
+	-- Draw arrow on next wicket
+
+	x, y = next_wicket[1], next_wicket[2] - 4
+	if next_wicket.pole then
+		x -= 9
+		if (next_wicket.reverse) x += 11
+		y += 1
+	elseif next_wicket.reverse then
+		x -= 4
+	else
+		x -= 3
+	end
+	spr(3, x, y, 1, 1, next_wicket.reverse)
+
+	-- Draw balls
+	for ball in all(balls) do
+		if ball.x and ball.y then
+			if debug_draw_primitives then
+				circ(ball.x, ball.y, 2, ball.color)
+				line(ball.x, ball.y, ball.x, ball.y, 0)
 			else
-				rectfill(w[1], w[2] - 5, w[1], w[2] - 5, 9)
-				rectfill(w[1], w[2] + 4, w[1], w[2] + 4, 9)
+				add(sprites, {idx=1, x=ball.x - 3, y=ball.y-3, pal=ball.palette})
+			end
+		end
+	end
+	pal()
+
+	-- Draw wicket & pole tops
+	if (not debug_no_draw_tops) and (not debug_draw_primitives) then
+		for w in all(WICKETS) do
+			if not w.hidden then
+				if w.pole then
+					add(sprites, {idx=23, x=w[1]-3, y=w[2]-7, palt=3})
+				else
+					add(sprites, {idx=18, x=w[1]-4, y=w[2]-9, h=2, palt=3})
+				end
 			end
 		end
 	end
 
-	-- Set display palette at end, so it doesn't get wiped out by any pal() calls
-	-- pal({[13]=139,[15]=138}, 1)
-	pal({[13]=139,[15]=3}, 1)
-	-- pal({[13]=3,[15]=138}, 1)
+	if (not moving) draw_shot()
 
+	sort_z(sprites)
+	for s in all(sprites) do
+		pal(s.pal)
+		if (s.palt) then
+			palt(0, false)
+			palt(s.palt, true)
+		else
+			palt()
+		end
+		spr(s.idx, s.x, s.y, s.w or 1, s.h or 1)
+	end
+	palt()
+	pal()
 
+	if debug_draw_primitives then
+		for w in all(WICKETS) do
+			if w.pole then
+				line(w[1], w[2], w[1], w[2], 8)
+			else
+				line(w[1], w[2] - 5, w[1], w[2] - 5, 9)
+				line(w[1], w[2] + 4, w[1], w[2] + 4, 9)
+			end
+		end
+	end
+
+	-- if (not moving) draw_shot()
+
+	--
+	-- HUD
+	--
 
 	camera()
-	cursor(1, 1, 8)
+	rectfill(0, 128 - STATUS_BAR_HEIGHT, 128, 128, 4)
+
+	if (not moving) draw_shot_power_meter()
+
+	--
+	-- Debug overlays
+	--
+
+	-- cursor(1, 1, 8)
+	cursor(112, 1, 8)
 	-- print('mem:' .. stat(0))
 	local cpu = stat(1)
 	-- local cpu_draw = cpu - cpu_update
 	-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
 	print(round(cpu * 100))
+
+	--
+	-- Display palette
+	--
+
+	-- pal({[13]=139,[15]=138}, 1)
+	pal({[13]=139,[15]=3}, 1)
+	-- pal({[13]=3,[15]=138}, 1)
 end
 
 __gfx__
-00000000333333333b3b3b3bbbbbbbbb000000003333777777773333333c33330000000000000000000000000000000000000000000000000000000000000000
-0000000033333333b3b3b3b3bbbbbbbb008e88003333733333373333333833330000000000000000000000000000000000000000000000000000000000000000
-00000000333333333b3b3b3bbbbbbbbb08e7e8803333733333373333333033330000000000000000000000000000000000000000000000000000000000000000
-0000000033333333b3b3b3b3bbbbbbbb088e88803333733333373333333a33330000000000000000000000000000000000000000000000000000000000000000
-00000000333333333b3b3b3bbbbbbbbb088888803333733555575553333133530000000000000000000000000000000000000000000000000000000000000000
-0000000033333333b3b3b3b3bbbbbbbb088888203333735333373533333935330000000000000000000000000000000000000000000000000000000000000000
-00000000333333333b3b3b3bbbbbbbbb008222003333753333375333333453330000000000000000000000000000000000000000000000000000000000000000
-0000000033333333b3b3b3b3bbbbbbbb000000003333733333373333333433330000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000003333777777773333333c33330000000000000000000000000000000000000000000000000000000000000000
+0000000000e880000000000000000800000000003333733333373333333833330000000000000000000000000000000000000000000000000000000000000000
+000000000e7e88000000000000000880000000003333733333373333333033330000000000000000000000000000000000000000000000000000000000000000
+0000000008e888000055550088888888000000003333733333373333333a33330000000000000000000000000000000000000000000000000000000000000000
+00000000088882000555555000000880000000003333733555575553333133530000000000000000000000000000000000000000000000000000000000000000
+00000000008220000555555000000800000000003333735333373533333935330000000000000000000000000000000000000000000000000000000000000000
+00000000000000000055550000000000000000003333753333375333333453330000000000000000000000000000000000000000000000000000000000000000
+00000000000000000000000000000000000000003333733333373333333433330000000000000000000000000000000000000000000000000000000000000000
 33333333333333333333333333333333333333333333777777773333333c33330000000000000000000000000000000000000000000000000000000000000000
 33337335333333353333733333333333333333333333733333373333333833330000000000000000000000000000000000000000000000000000000000000000
 33337355333333553333733333333333333333333333733333373333333033330000000000000000000000000000000000000000000000000000000000000000
