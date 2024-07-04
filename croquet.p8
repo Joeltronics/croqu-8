@@ -106,7 +106,7 @@ SHOT_POWER_COLORS = {1, 12, 11, 10, 9, 8}
 players = {}
 balls = {}
 
-player_idx = 0
+player_idx = nil
 
 camera_x = 64
 camera_y = CY
@@ -207,7 +207,7 @@ end
 function ball_collisions()
 	-- Partially based on pico pool by nusan (CC4-BY-NC-SA)
 
-	local any_collisions = false
+	local any_collisions, current_player = false, players[player_idx]
 
 	for idx1 = 1, #balls do
 		local b1 = balls[idx1]
@@ -236,6 +236,8 @@ function ball_collisions()
 
 					add(b1.collisions, {b2.x, b2.y})
 					add(b2.collisions, {b1.x, b1.y})
+
+					if (b1 == current_player.ball or b2 == current_player.ball) current_player_ball_collision()
 
 					-- If no balls are moving, then we can skip this entirely
 					if moving_cooldown > 0 then
@@ -385,11 +387,23 @@ end
 
 function next_player()
 
+	if player_idx then
+		player = players[player_idx]
+		assert(player.shots == 0, 'player.shots='..player.shots)
+		assert(player.bonus_shots == 0 or not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
+	else
+		player_idx = 0
+	end
+
 	reset_off_screen_balls()
 
 	player_idx %= #PALETTES
 	player_idx += 1
-	local player = players[player_idx]
+	player = players[player_idx]
+
+	assert(player.shots == 0, 'player.shots='..player.shots)
+	assert(not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
+	player.shots = 1
 
 	shot_angle = 0
 	shot_power = 0.25
@@ -401,6 +415,11 @@ function next_player()
 	camera_y = player.ball.y
 end
 
+function current_player_ball_collision()
+	local p = players[player_idx]
+	p.bonus_shots = p.bonus_shots or 2
+end
+
 function score_wicket(player)
 	if player.last_wicket_idx == #WICKETS then
 		play_sound_end_game()
@@ -408,6 +427,8 @@ function score_wicket(player)
 	else
 		play_sound_score_wicket()
 		player.last_wicket_idx += 1
+		if (player == players[player_idx]) player.shots += 1
+		player.bonus_shots = nil
 	end
 end
 
@@ -442,10 +463,12 @@ function _init()
 			color_light=palette[14],
 			color_dark=palette[2],
 			last_wicket_idx=1,
+			shots=0,
+			-- bonus_shots=nil,
 		})
 	end
 
-	player_idx = 0
+	player_idx = nil
 	next_player()
 
 	cls()
@@ -476,9 +499,38 @@ function check_wickets(player)
 	if (through) score_wicket(player)
 end
 
+function launch_ball()
+
+	local player_ball = players[player_idx].ball
+
+	-- Launch ball
+
+	-- TODO: add slight randomness to angle, depending on power
+
+	local dx, dy = cos(shot_angle), sin(shot_angle)
+
+	local v = SHOT_V_MIN + (SHOT_V_MAX - SHOT_V_MIN) * shot_power * shot_power
+
+	player_ball.vx = v * dx
+	player_ball.vy = v * dy
+	moving_cooldown = MOVING_COOLDOWN_FRAMES
+
+	if player.bonus_shots and player.bonus_shots > 0 then
+		player.bonus_shots -= 1
+	else
+		player.shots -= 1
+	end
+
+	shot_angle = 0
+	shot_power = 0.25
+
+	play_sound_launch()
+end
+
 function _update60()
 
-	local player_ball, op, x = players[player_idx].ball, btnp(4), btn(5)
+	local player = players[player_idx]
+	local player_ball, op, x = player.ball, btnp(4), btn(5)
 
 	while stat(30) do
 		local key = stat(31)
@@ -504,21 +556,7 @@ function _update60()
 
 	end
 
-	if op and moving_cooldown <= 0 then
-		-- Launch ball
-
-		-- TODO: add slight randomness to angle, depending on power
-
-		local dx, dy = cos(shot_angle), sin(shot_angle)
-
-		local v = SHOT_V_MIN + (SHOT_V_MAX - SHOT_V_MIN) * shot_power * shot_power
-
-		player_ball.vx = v * dx
-		player_ball.vy = v * dy
-		moving_cooldown = MOVING_COOLDOWN_FRAMES
-
-		play_sound_launch()
-	end
+	if (op and moving_cooldown <= 0) launch_ball()
 
 	if moving_cooldown > 0 then
 		-- Process physics
@@ -576,7 +614,7 @@ function _update60()
 		camera_x = player_ball.x
 		camera_y = player_ball.y
 
-		if (moving_cooldown <= 0) next_player()
+		if (moving_cooldown <= 0 and (player.shots + (player.bonus_shots or 0)) <= 0) next_player()
 
 	else
 		if x then
@@ -673,16 +711,30 @@ function draw_status_bar()
 		local y1 = 9*idx-1
 		local y2 = y1 + 6
 
-		rectfill(1, y1, STATUS_BAR_WIDTH-1, y2, p.color_main)
+		rectfill(1, y1, STATUS_BAR_WIDTH-1, y2, main_color)
 		line(0, y1, 0, y2, p.color_light)
 		line(STATUS_BAR_WIDTH, y1, STATUS_BAR_WIDTH, y2, p.color_dark)
 
 		print_centered(players[idx].last_wicket_idx - 1, 5, y1+1, textcol)
 
-		if idx == player_idx then
-			-- TODO: actual current number of balls, along with bonus balls
-			circfill(STATUS_BAR_WIDTH + 4, y1 + 3, 2, main_color)
-			-- circ(STATUS_BAR_WIDTH + 4, y1 + 3, 2, main_color)
+		local x = STATUS_BAR_WIDTH + 4
+
+		for i = 1,p.shots do
+			circfill(x, y1 + 3, 2, main_color)
+			x += 6
+		end
+
+		if p.bonus_shots then
+			for i=1,2 do
+				if (i <= p.bonus_shots) then
+					circfill(x, y1 + 3, 2, main_color)
+					circ(x, y1 + 3, 2, textcol)
+				else
+					-- circ(x, y1 + 3, 2, main_color)
+					circ(x, y1 + 3, 2, textcol)
+				end
+				x += 6
+			end
 		end
 	end
 
