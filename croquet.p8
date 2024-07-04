@@ -8,6 +8,8 @@ __lua__
 -- Game core consts
 --
 
+DEBUG = true
+
 BALL_R = 2.25
 BALL_D = 2 * BALL_R
 BALL_D2 = BALL_D*BALL_D
@@ -101,6 +103,7 @@ SHOT_POWER_COLORS = {1, 12, 11, 10, 9, 8}
 -- Globals
 --
 
+players = {}
 balls = {}
 
 player_idx = 0
@@ -268,73 +271,76 @@ function wicket_collisions()
 
 	local any_collisions = false
 
-	for ball in all(balls) do
-		local bx, by = ball.x, ball.y
-		for wicket_idx = 1,#WICKETS do
-			local w = WICKETS[wicket_idx]
+	for player in all(players) do
+		local ball = player.ball
+		if ball then
+			local bx, by = ball.x, ball.y
+			for wicket_idx = 1,#WICKETS do
+				local w = WICKETS[wicket_idx]
 
-			local wx = w[1]
+				local wx = w[1]
 
-			local y_offs, vel_reduce
-			if w.pole then
-				y_offs = {0}
-				vel_reduce = VELOCITY_REDUCE_POLE_COLLISION
-			else
-				y_offs = {-5, 4}
-				vel_reduce = VELOCITY_REDUCE_WICKET_COLLISION
-			end
+				local y_offs, vel_reduce
+				if w.pole then
+					y_offs = {0}
+					vel_reduce = VELOCITY_REDUCE_POLE_COLLISION
+				else
+					y_offs = {-5, 4}
+					vel_reduce = VELOCITY_REDUCE_WICKET_COLLISION
+				end
 
-			for y_off in all(y_offs) do
-				local wy = w[2] + y_off
+				for y_off in all(y_offs) do
+					local wy = w[2] + y_off
 
-				local dx, dy, d2 = bx - wx, by - wy
+					local dx, dy, d2 = bx - wx, by - wy
 
-				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
+					if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
 
-				if d2 and d2 <= BALL_POLE_D2 then
-					assert(d2 >= 0, 'd2=' .. d2)
+					if d2 and d2 <= BALL_POLE_D2 then
+						assert(d2 >= 0, 'd2=' .. d2)
 
-					local d = sqrt(d2)
-					local push = max(0, BALL_POLE_D - d)
+						local d = sqrt(d2)
+						local push = max(0, BALL_POLE_D - d)
 
-					if push > 0 then
-						any_collisions = true
+						if push > 0 then
+							any_collisions = true
 
-						add(ball.collisions, {wx, wy})
+							add(ball.collisions, {wx, wy})
 
-						ball.x += dx*push
-						ball.y += dy*push
+							ball.x += dx*push
+							ball.y += dy*push
 
-						if moving_cooldown > 0 then
-							play_sound_wicket_collision(w, ball)
+							if moving_cooldown > 0 then
+								play_sound_wicket_collision(w, ball)
 
-							local nx, ny = dy / d, -dx / d
+								local nx, ny = dy / d, -dx / d
 
-							assert(
-								-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
-								'dx=' .. dx ..
-								',dy=' .. dy ..
-								',d2=' .. d2 ..
-								',d=' .. d ..
-								',nx=' .. nx ..
-								',ny=' .. ny
-							)
+								assert(
+									-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
+									'dx=' .. dx ..
+									',dy=' .. dy ..
+									',d2=' .. d2 ..
+									',d=' .. d ..
+									',nx=' .. nx ..
+									',ny=' .. ny
+								)
 
-							ball.vx *= vel_reduce
-							ball.vy *= vel_reduce
+								ball.vx *= vel_reduce
+								ball.vy *= vel_reduce
 
-							local vx, vy = ball.vx, ball.vy
-							local v_dot_n = vx * nx + vy * ny
+								local vx, vy = ball.vx, ball.vy
+								local v_dot_n = vx * nx + vy * ny
 
-							ball.vx -= 2 * v_dot_n * nx
-							ball.vy -= 2 * v_dot_n * ny
+								ball.vx -= 2 * v_dot_n * nx
+								ball.vy -= 2 * v_dot_n * ny
+							end
 						end
-					end
 
-					if w.pole and wicket_idx == ball.last_wicket_idx + 1 then
-						score_wicket(ball)
-					end
+						if w.pole and wicket_idx == ball.last_wicket_idx + 1 then
+							score_wicket(player)
+						end
 
+					end
 				end
 			end
 		end
@@ -383,30 +389,32 @@ function next_player()
 
 	player_idx %= #PALETTES
 	player_idx += 1
-	if (player_idx > #balls) add_ball()
+	local player = players[player_idx]
+
 	shot_angle = 0
 	shot_power = 0.25
 	moving_cooldown = 0
 
-	local player_ball = balls[player_idx]
+	if (not player.ball) reset_ball(player)
 
-	camera_x = player_ball.x
-	camera_y = player_ball.y
+	camera_x = player.ball.x
+	camera_y = player.ball.y
 end
 
-function score_wicket(ball)
-	if ball.last_wicket_idx == #WICKETS then
+function score_wicket(player)
+	if player.last_wicket_idx == #WICKETS then
 		play_sound_end_game()
 		-- TODO: finish game
 	else
 		play_sound_score_wicket()
-		ball.last_wicket_idx += 1
+		player.last_wicket_idx += 1
 	end
 end
 
-function add_ball()
-	local palette = PALETTES[#balls + 1]
-	add(balls, {
+function reset_ball(player)
+	local palette = player.palette
+
+	player.ball = {
 		x=WICKETS[1][1] + 4,
 		y=WICKETS[1][2] + 5,
 		vx=0,
@@ -415,27 +423,42 @@ function add_ball()
 		palette=palette,
 		last_wicket_idx=1,
 		collisions={},
-	})
+	}
+
+	balls = {}
+	for p in all(players) do
+		if (p.ball) add(balls, p.ball)
+	end
 
 	resolve_all_static_collisions()
 end
 
 function _init()
-	balls = {}
+	players, balls = {}, {}
+	for palette in all(PALETTES) do
+		add(players, {
+			palette=palette,
+			color_main=palette[8],
+			color_light=palette[14],
+			color_dark=palette[2],
+			last_wicket_idx=1,
+		})
+	end
+
 	player_idx = 0
 	next_player()
 
 	cls()
-	poke(0x5F2D, 1)  -- enable keyboard
+	if (DEBUG) poke(0x5F2D, 1)  -- enable keyboard
 	poke(0x5f36, 0x40)  -- prevent printing at bottom of screen from triggering scroll
 end
 
-function check_wickets(ball)
+function check_wickets(player)
 	-- Note: only checks wickets, not poles
 	-- (Poles are handled through collision physics)
 
-	local w = WICKETS[ball.last_wicket_idx + 1]
-	if (w.pole) return
+	local w, ball = WICKETS[player.last_wicket_idx + 1], player.ball
+	if (w.pole or not ball) return
 	local x, y, xp, yp, wx, wy = ball.x, ball.y, ball.x_prev, ball.y_prev, w[1], w[2]
 
 	local through = false
@@ -450,12 +473,12 @@ function check_wickets(ball)
 			if (xp <= wx and x > wx) through = true
 		end
 	end
-	if (through) score_wicket(ball)
+	if (through) score_wicket(player)
 end
 
 function _update60()
 
-	local player_ball, op, x = balls[player_idx], btnp(4), btn(5)
+	local player_ball, op, x = players[player_idx].ball, btnp(4), btn(5)
 
 	while stat(30) do
 		local key = stat(31)
@@ -467,13 +490,13 @@ function _update60()
 			if key == 'h' then
 				player_ball.x -= 1
 				resolve_all_static_collisions()
-			elseif (key == 'j') then
+			elseif key == 'j' then
 				player_ball.y += 1
 				resolve_all_static_collisions()
-			elseif (key == 'k') then
+			elseif key == 'k' then
 				player_ball.y -= 1
 				resolve_all_static_collisions()
-			elseif (key == 'l') then
+			elseif key == 'l' then
 				player_ball.x += 1
 				resolve_all_static_collisions()
 			end
@@ -502,8 +525,8 @@ function _update60()
 
 		moving_cooldown -= 1
 
-		-- TODO optimization: keep a list of moving balls, only iterate those
-		-- TODO optimization: when looping through each ball, make a list of close balls & wickets
+		-- TODO optimization: keep a list of moving players, only iterate those
+		-- TODO optimization: when looping through each ball, make a list of close players & wickets
 		-- (with simpler check, e.g. abs(dx)+abs(dy)), then these are the only ones that get checked for collisions
 
 		for ball in all(balls) do
@@ -545,8 +568,8 @@ function _update60()
 			end
 		end
 
-		for ball in all(balls) do
-			check_wickets(ball)
+		for player in all(players) do
+			check_wickets(player)
 		end
 
 		-- TODO: If player's ball isn't moving but another is, make camera follow that one instead
@@ -582,8 +605,8 @@ function _update60()
 end
 
 function draw_shot()
-	local player_ball = balls[player_idx]
-	local x, y = player_ball.x, player_ball.y
+	local player = players[player_idx]
+	local x, y = player.ball.x, player.ball.y
 	if (not x) return -- HACK: this shouldn't be needed
 	local dx, dy = cos(shot_angle), sin(shot_angle)
 
@@ -625,11 +648,11 @@ function draw_shot()
 	line_round(
 		x + (5*c[1][1] + c[2][1])/6, y + (5*c[1][2] + c[2][2])/6,
 		x + (5*c[4][1] + c[3][1])/6, y + (5*c[4][2] + c[3][2])/6,
-		player_ball.color)
+		player.color_main)
 	line_round(
 		x + (c[1][1] + 5*c[2][1])/6, y + (c[1][2] + 5*c[2][2])/6,
 		x + (c[4][1] + 5*c[3][1])/6, y + (c[4][2] + 5*c[3][2])/6,
-		player_ball.color)
+		player.color_main)
 end
 
 function draw_status_bar()
@@ -641,24 +664,20 @@ function draw_status_bar()
 	pset(STATUS_BAR_WIDTH, 0, 4)
 	pset(0, 0, 6)
 
-	-- Have to iterate palettes instead of balls because we need to include colors that aren't in game yet
-	for idx=1,#PALETTES do
-		local p = PALETTES[idx]
+	for idx = 1,#players do
+		local p = players[idx]
 
-		local main_color = p[8]
-		local textcol = 7
-		if (main_color >= 9) textcol = 0
+		local main_color, textcol = p.color_main, 7
+		if (p.color_main >= 9) textcol = 0
 
 		local y1 = 9*idx-1
 		local y2 = y1 + 6
 
-		rectfill(1, y1, STATUS_BAR_WIDTH-1, y2, main_color)
-		line(0, y1, 0, y2, p[14])
-		line(STATUS_BAR_WIDTH, y1, STATUS_BAR_WIDTH, y2, p[2])
+		rectfill(1, y1, STATUS_BAR_WIDTH-1, y2, p.color_main)
+		line(0, y1, 0, y2, p.color_light)
+		line(STATUS_BAR_WIDTH, y1, STATUS_BAR_WIDTH, y2, p.color_dark)
 
-		local score = 0
-		if (idx <= #balls) score = balls[idx].last_wicket_idx - 1
-		print_centered(score, 5, y1+1, textcol)
+		print_centered(players[idx].last_wicket_idx - 1, 5, y1+1, textcol)
 
 		if idx == player_idx then
 			-- TODO: actual current number of balls, along with bonus balls
@@ -678,8 +697,8 @@ end
 
 function _draw()
 
-	local player_ball, x, y = balls[player_idx]
-	local next_wicket = WICKETS[player_ball.last_wicket_idx + 1]
+	local player, sprites, x, y = players[player_idx], {}
+	local next_wicket = WICKETS[player.last_wicket_idx + 1]
 
 	camera(camera_x - 64, camera_y - 64)
 
@@ -757,8 +776,6 @@ function _draw()
 	--
 	-- Balls & wickets - stuff where Z-order matters
 	--
-
-	local sprites = {}
 
 	for ball in all(balls) do
 		x, y = round(ball.x), round(ball.y)
@@ -841,22 +858,24 @@ function _draw()
 	-- Debug overlays
 	--
 
-	cursor(96, 1, 8)
-	-- print('mem:' .. stat(0))
-	local cpu = stat(1)
-	-- local cpu_draw = cpu - cpu_update
-	-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
-	print(round(cpu * 100))
+	if DEBUG then
+		cursor(96, 1, 8)
+		-- print('mem:' .. stat(0))
+		local cpu = stat(1)
+		-- local cpu_draw = cpu - cpu_update
+		-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
+		print(round(cpu * 100))
 
-	local player_ball = balls[player_idx]
-	print('x=' .. player_ball.x)
-	print('y=' .. player_ball.y)
-	if (moving_cooldown <= 0) then
-		print('p=' .. shot_power)
-		print('a=' .. shot_angle*256)
-	else
-		print('vx=' .. player_ball.vx)
-		print('vy=' .. player_ball.vy)
+		local player_ball = players[player_idx].ball
+		print('x=' .. player_ball.x)
+		print('y=' .. player_ball.y)
+		if (moving_cooldown <= 0) then
+			print('p=' .. shot_power)
+			print('a=' .. shot_angle*256)
+		else
+			print('vx=' .. player_ball.vx)
+			print('vy=' .. player_ball.vy)
+		end
 	end
 
 	--
