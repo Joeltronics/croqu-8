@@ -73,7 +73,7 @@ BALL_STOP_RANDOM_MOVEMENT = 0.25
 -- Graphics Consts
 --
 
-STATUS_BAR_HEIGHT = 7
+STATUS_BAR_WIDTH = 8
 
 ROUGH_FILLP = 0b0101010110101010
 -- ROUGH_COLOR = 0x34
@@ -86,8 +86,11 @@ PALETTES = {
 	{[8]=0, [2]=5, [14]=5}, -- Black
 	{[8]=10, [2]=9, [14]=6}, -- Yellow
 
+	-- TODO: green is the traditional color here, make it work
+	-- (Could be doable if using more colors for ball?)
 	{[8]=1, [2]=5, [14]=12}, -- Dark blue
 	-- {[8]=3, [2]=5, [14]=11}, -- Green
+	-- {[8]=11, [2]=5, [14]=6}, -- Lighter Green
 
 	{[8]=9, [2]=4, [14]=10}, -- Orange
 }
@@ -117,6 +120,11 @@ debug_increase_shot_pointer_length = false
 --
 -- Utility functions
 --
+
+function print_centered(text, x, y, col)
+	local t = '' .. text
+	print(t, x - 2*#t, y, col)
+end
 
 function round(val)
 	return flr(val + 0.5)
@@ -262,7 +270,6 @@ function wicket_collisions()
 
 	for ball in all(balls) do
 		local bx, by = ball.x, ball.y
-		-- for w in all(WICKETS) do
 		for wicket_idx = 1,#WICKETS do
 			local w = WICKETS[wicket_idx]
 
@@ -455,6 +462,23 @@ function _update60()
 		if (key == '1') debug_draw_primitives = not debug_draw_primitives
 		if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
 		if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
+
+		if moving_cooldown <= 0 then
+			if key == 'h' then
+				player_ball.x -= 1
+				resolve_all_static_collisions()
+			elseif (key == 'j') then
+				player_ball.y += 1
+				resolve_all_static_collisions()
+			elseif (key == 'k') then
+				player_ball.y -= 1
+				resolve_all_static_collisions()
+			elseif (key == 'l') then
+				player_ball.x += 1
+				resolve_all_static_collisions()
+			end
+		end
+
 	end
 
 	if op and moving_cooldown <= 0 then
@@ -538,6 +562,8 @@ function _update60()
 			if (btn(2)) camera_y -= 4  -- up
 			if (btn(3)) camera_y += 4  -- down
 		else
+			camera_x = player.ball.x
+			camera_y = player.ball.y
 			if (btn(0)) shot_angle += 1/256  -- left
 			if (btn(1)) shot_angle -= 1/256  -- right
 			if (btn(2)) shot_power += 1/64  -- up
@@ -549,8 +575,8 @@ function _update60()
 	end
 
 	moving_cooldown = max(moving_cooldown, 0)
-	camera_x = clip_num(camera_x, 64, WIDTH-64)
-	camera_y = clip_num(camera_y, 64, HEIGHT-64+STATUS_BAR_HEIGHT)
+	camera_x = clip_num(camera_x, 64 - STATUS_BAR_WIDTH, WIDTH-64)
+	camera_y = clip_num(camera_y, 64, HEIGHT-64)
 
 	cpu_update = stat(1)
 end
@@ -563,8 +589,8 @@ function draw_shot()
 
 	-- Draw line
 
-	local l = 12
-	if (debug_increase_shot_pointer_length) l = 64
+	local l = 16
+	if (debug_increase_shot_pointer_length) l = 256
 
 	line_round(x, y, x + l*dx, y + l*dy, shot_power_color())
 
@@ -582,6 +608,12 @@ function draw_shot()
 		{-w*dy - d*dx,      w*dx - d*dy},
 	}
 
+	-- for i=1,4 do
+	-- 	for j=1,2 do
+	-- 		c[i][j] = round(c[i][j])
+	-- 	end
+	-- end
+
 	for idx=1,4 do
 		line_round(
 			x + c[idx][1],
@@ -590,11 +622,58 @@ function draw_shot()
 			y + c[(idx%4)+1][2],
 			4)
 	end
+	line_round(
+		x + (5*c[1][1] + c[2][1])/6, y + (5*c[1][2] + c[2][2])/6,
+		x + (5*c[4][1] + c[3][1])/6, y + (5*c[4][2] + c[3][2])/6,
+		player_ball.color)
+	line_round(
+		x + (c[1][1] + 5*c[2][1])/6, y + (c[1][2] + 5*c[2][2])/6,
+		x + (c[4][1] + 5*c[3][1])/6, y + (c[4][2] + 5*c[3][2])/6,
+		player_ball.color)
 end
 
-function draw_shot_power_meter()
-	rectfill(125, 63 - 62*shot_power, 126, 63, shot_power_color())
-	rect(124, 0, 127, 64, 0)
+function draw_status_bar()
+
+	rectfill(1, 1, STATUS_BAR_WIDTH - 1, 128, 4)
+	line(STATUS_BAR_WIDTH, 1, STATUS_BAR_WIDTH, 128, 2)
+	line(0, 1, 0, 128, 9)
+	line(0, 0, STATUS_BAR_WIDTH, 0, 9)
+	pset(STATUS_BAR_WIDTH, 0, 4)
+	pset(0, 0, 6)
+
+	-- Have to iterate palettes instead of balls because we need to include colors that aren't in game yet
+	for idx=1,#PALETTES do
+		local p = PALETTES[idx]
+
+		local main_color = p[8]
+		local textcol = 7
+		if (main_color >= 9) textcol = 0
+
+		local y1 = 9*idx-1
+		local y2 = y1 + 6
+
+		rectfill(1, y1, STATUS_BAR_WIDTH-1, y2, main_color)
+		line(0, y1, 0, y2, p[14])
+		line(STATUS_BAR_WIDTH, y1, STATUS_BAR_WIDTH, y2, p[2])
+
+		local score = 0
+		if (idx <= #balls) score = balls[idx].last_wicket_idx - 1
+		print_centered(score, 5, y1+1, textcol)
+
+		if idx == player_idx then
+			-- TODO: actual current number of balls, along with bonus balls
+			circfill(STATUS_BAR_WIDTH + 4, y1 + 3, 2, main_color)
+			-- circ(STATUS_BAR_WIDTH + 4, y1 + 3, 2, main_color)
+		end
+	end
+
+	if moving_cooldown <= 0 then
+		-- Shot power meter
+		rectfill(3, 125 - 60*shot_power, 5, 127, shot_power_color())
+		rect(2, 64, 6, 128, 0)
+	end
+
+	spr(54, 0, 124, 2, 1)
 end
 
 function _draw()
@@ -616,7 +695,7 @@ function _draw()
 			fillp(fp)
 			local off = ROUGH
 			if (ROUGH < 1) off = -8
-			rectfill(x*16 + off, y*16 + off, x*16 + 16 + off, y*16 + 16 + off, 0xDF)
+			rectfill(x*16 + off, y*16 + off, x*16 + 16 + off, y*16 + 16 + off, 0xD3)
 		end
 	end
 	if ROUGH > 0 then
@@ -639,7 +718,7 @@ function _draw()
 	-- TODO: Disabled for now, it looks bad with ball palettes that use grey as their dark color
 	-- if not debug_draw_primitives then
 	-- 	for ball in all(balls) do
-	-- 		spr(2, ball.x - 2, ball.y - 4)
+	-- 		spr(2, round(ball.x) - 2, round(ball.y) - 4)
 	-- 	end
 	-- end
 
@@ -682,11 +761,12 @@ function _draw()
 	local sprites = {}
 
 	for ball in all(balls) do
+		x, y = round(ball.x), round(ball.y)
 		if debug_draw_primitives then
-			circ(ball.x, ball.y, BALL_R, ball.color)
-			line(ball.x, ball.y, ball.x, ball.y, 0)
+			circ(x, y, BALL_R, ball.color)
+			line(x, y, x, y, 0)
 		else
-			add(sprites, {idx=1, x=ball.x - 3, y=ball.y-3, z=ball.y, pal=ball.palette})
+			add(sprites, {idx=1, x=x - 3, y=y-3, z=y, pal=ball.palette})
 		end
 	end
 	pal()
@@ -697,8 +777,7 @@ function _draw()
 				if w.pole then
 					add(sprites, {idx=23, x=w[1]-3, y=w[2]-7, z=w[2], palt=3})
 				else
-					-- TODO: is this the right z?
-					add(sprites, {idx=18, x=w[1]-4, y=w[2]-9, z=w[2], h=2, palt=3})
+					add(sprites, {idx=18, x=w[1]-4, y=w[2]-9, z=w[2]+2, h=2, palt=3})
 				end
 			end
 		end
@@ -756,26 +835,13 @@ function _draw()
 	--
 
 	camera()
-	rectfill(0, 128 - STATUS_BAR_HEIGHT, 128, 128, 4)
-
-	-- for idx=1,#balls do
-	for idx=1,#PALETTES do
-		cursor(8 + 12*idx, 129 - STATUS_BAR_HEIGHT, PALETTES[idx][8])
-		if idx <= #balls then
-			print(balls[idx].last_wicket_idx - 1)
-		else
-			print(0)
-		end
-	end
-
-	if (moving_cooldown <= 0) draw_shot_power_meter()
+	draw_status_bar()
 
 	--
 	-- Debug overlays
 	--
 
-	cursor(1, 1, 8)
-	-- cursor(100, 1, 8)
+	cursor(96, 1, 8)
 	-- print('mem:' .. stat(0))
 	local cpu = stat(1)
 	-- local cpu_draw = cpu - cpu_update
@@ -785,16 +851,19 @@ function _draw()
 	local player_ball = balls[player_idx]
 	print('x=' .. player_ball.x)
 	print('y=' .. player_ball.y)
-	print('vx=' .. player_ball.vx)
-	print('vy=' .. player_ball.vy)
+	if (moving_cooldown <= 0) then
+		print('p=' .. shot_power)
+		print('a=' .. shot_angle*256)
+	else
+		print('vx=' .. player_ball.vx)
+		print('vy=' .. player_ball.vy)
+	end
 
 	--
 	-- Set display palette
 	--
 
-	-- pal({[13]=139,[15]=138}, 1)
-	pal({[13]=139,[15]=3}, 1)
-	-- pal({[13]=3,[15]=138}, 1)
+	pal({[13]=139}, 1)
 end
 
 __gfx__
@@ -822,14 +891,14 @@ __gfx__
 333363333333e3333333633300000000000000003333335333333533333335330000000000000000000000000000000000000000000000000000000000000000
 33333333333333333333333300000000000000003333353333335333333353330000000000000000000000000000000000000000000000000000000000000000
 33333333333333333333333300000000000000003333533333353333333e33330000000000000000000000000000000000000000000000000000000000000000
-33333333333333333333333333333333333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33333333333333333333333333333333333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33333333333333333333333333333333333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33337777777733333333733333373333333377777777333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33333533333353333333353333335333333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33333353333335333333335333333533333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33333335555555533333333555555553333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
-33333333333333333333333333333333333333333333333300000000000000000000000000000000000000000000000000000000000000000000000000000000
+3333333333333333333333333333333333333333333333330d030030000000000000000000000000000000000000000000000000000000000000000000000000
+3333333333333333333333333333333333333333333333333dd3d03d000000000000000000000000000000000000000000000000000000000000000000000000
+33333333333333333333333333333333333333333333333353d5d5dd500000000000000000000000000000000000000000000000000000000000000000000000
+333377777777333333337333333733333333777777773333535535d3d00000000000000000000000000000000000000000000000000000000000000000000000
+3333353333335333333335333333533333333333333333333d5d3d33d00000000000000000000000000000000000000000000000000000000000000000000000
+3333335333333533333333533333353333333333333333335d3d5d35300000000000000000000000000000000000000000000000000000000000000000000000
+333333355555555333333335555555533333333333333333535353d5300000000000000000000000000000000000000000000000000000000000000000000000
+333333333333333333333333333333333333333333333333355333d3d00000000000000000000000000000000000000000000000000000000000000000000000
 __map__
 0101020201010202010102020101020200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 0101020201010202010102020101020200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
