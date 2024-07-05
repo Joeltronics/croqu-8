@@ -58,8 +58,10 @@ WICKETS = {
 
 COLLISION_CHECK_DIVISIONS = 4
 
-SHOT_V_MAX = 2
-SHOT_V_MIN = 0.125
+DEFAULT_SHOT_POWER = 0.5
+
+SHOT_V_MAX = 1.5
+SHOT_V_MIN = 0.0625
 
 DRAG = 1 - 1/128
 DRAG_ROUGH = 1 - 1/8
@@ -112,7 +114,7 @@ camera_x = 64
 camera_y = CY
 
 shot_angle = 0
-shot_power = 0.25
+shot_power = DEFAULT_SHOT_POWER
 
 moving_cooldown = 0
 
@@ -374,7 +376,7 @@ function wicket_collisions()
 							end
 						end
 
-						if w.pole and wicket_idx == ball.last_wicket_idx + 1 then
+						if w.pole and wicket_idx == player.last_wicket_idx + 1 then
 							score_wicket(player)
 						end
 
@@ -433,7 +435,7 @@ function resolve_all_static_collisions_for_ball(ball)
 end
 
 --
--- Game
+-- Game logic
 --
 
 function reset_off_screen_balls()
@@ -447,9 +449,14 @@ end
 
 function next_shot_same_player()
 	reset_off_screen_balls()
+	shot_power = DEFAULT_SHOT_POWER
+	shot_angle = 0
+	if (WICKETS[players[player_idx].last_wicket_idx + 1].reverse) shot_angle = 0.5
 end
 
 function next_player()
+
+	local player
 
 	if player_idx then
 		player = players[player_idx]
@@ -464,6 +471,10 @@ function next_player()
 	player_idx %= #PALETTES
 	player_idx += 1
 	player = players[player_idx]
+
+	shot_power = DEFAULT_SHOT_POWER
+	shot_angle = 0
+	if (WICKETS[players[player_idx].last_wicket_idx + 1].reverse) shot_angle = 0.5
 
 	assert(player.shots == 0, 'player.shots='..player.shots)
 	assert(not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
@@ -561,18 +572,14 @@ end
 
 function launch_ball()
 
-	local player_ball = players[player_idx].ball
-
-	-- Launch ball
-
 	-- TODO: add slight randomness to angle, depending on power
 
+	local player = players[player_idx]
 	local dx, dy = cos(shot_angle), sin(shot_angle)
-
 	local v = SHOT_V_MIN + (SHOT_V_MAX - SHOT_V_MIN) * shot_power * shot_power
 
-	player_ball.vx = v * dx
-	player_ball.vy = v * dy
+	player.ball.vx = v * dx
+	player.ball.vy = v * dy
 	moving_cooldown = MOVING_COOLDOWN_FRAMES
 
 	if player.bonus_shots and player.bonus_shots > 0 then
@@ -582,9 +589,6 @@ function launch_ball()
 	end
 
 	play_sound_launch()
-
-	shot_angle = 0
-	shot_power = 0.25
 end
 
 function _update60()
@@ -621,6 +625,7 @@ function _update60()
 
 	end
 
+	-- TODO: use timing-based power meter instead
 	if (op and moving_cooldown <= 0) launch_ball()
 
 	if moving_cooldown > 0 then
