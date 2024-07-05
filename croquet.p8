@@ -364,25 +364,60 @@ function resolve_all_static_collisions()
 	assert(false, "resolve_all_static_collisions hit iteration limit")
 end
 
+function resolve_all_static_collisions_for_ball(ball)
+
+	for i = 1,100 do
+		local any_collisions = wicket_collisions()
+
+		-- This logic needs to be slightly different from regular ball collisions
+		-- On collision, we only move this ball, not the other
+		-- TODO: consolidate?
+		for b2 in all(balls) do
+			assert(b2)
+			if b2 != ball then
+
+				local dx, dy, d2 = ball.x - b2.x, ball.y - b2.y
+
+				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
+
+				if d2 and d2 <= BALL_D2 then
+					assert(d2 >= 0, 'd2=' .. d2)
+
+					local d = sqrt(d2)
+					local push = max(0, BALL_D + 1 - d) / d
+
+					if push > 0 then
+						any_collisions = true
+						add(ball.collisions, {b2.x, b2.y})
+						add(b2.collisions, {ball.x, ball.y})
+						ball.x += dx*push
+						ball.y += dy*push
+					end
+				end
+			end
+		end
+
+		if (not any_collisions) return
+	end
+
+	assert(false, "resolve_all_static_collisions_for_ball hit iteration limit")
+end
+
 --
 -- Game
 --
 
 function reset_off_screen_balls()
-	while true do
-		local any_clipped = false
-
-		for ball in all(balls) do
-			local x_was, y_was = ball.x, ball.y
-			ball.x = clip_num(ball.x, ROUGH, WIDTH-ROUGH-1)
-			ball.y = clip_num(ball.y, ROUGH, HEIGHT-ROUGH-1)
-			if (ball.x != x_was or ball.y != y_was) any_clipped = true
-		end
-
-		if (not any_clipped) return
-
-		resolve_all_static_collisions()
+	for ball in all(balls) do
+		local x_was, y_was = ball.x, ball.y
+		ball.x = clip_num(ball.x, ROUGH, WIDTH-ROUGH-1)
+		ball.y = clip_num(ball.y, ROUGH, HEIGHT-ROUGH-1)
+		if (ball.x != x_was or ball.y != y_was) resolve_all_static_collisions_for_ball(ball)
 	end
+end
+
+function next_shot_same_player()
+	reset_off_screen_balls()
 end
 
 function next_player()
@@ -404,10 +439,6 @@ function next_player()
 	assert(player.shots == 0, 'player.shots='..player.shots)
 	assert(not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
 	player.shots = 1
-
-	shot_angle = 0
-	shot_power = 0.25
-	moving_cooldown = 0
 
 	if (not player.ball) reset_ball(player)
 
@@ -451,7 +482,7 @@ function reset_ball(player)
 		if (p.ball) add(balls, p.ball)
 	end
 
-	resolve_all_static_collisions()
+	resolve_all_static_collisions_for_ball(player.ball)
 end
 
 function _init()
@@ -539,19 +570,24 @@ function _update60()
 		if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
 
 		if moving_cooldown <= 0 then
+
+			local moved = false
+
 			if key == 'h' then
 				player_ball.x -= 1
-				resolve_all_static_collisions()
+				moved = true
 			elseif key == 'j' then
 				player_ball.y += 1
-				resolve_all_static_collisions()
+				moved = true
 			elseif key == 'k' then
 				player_ball.y -= 1
-				resolve_all_static_collisions()
+				moved = true
 			elseif key == 'l' then
 				player_ball.x += 1
-				resolve_all_static_collisions()
+				moved = true
 			end
+
+			if (moved) resolve_all_static_collisions_for_ball(player_ball)
 		end
 
 	end
@@ -614,7 +650,13 @@ function _update60()
 		camera_x = player_ball.x
 		camera_y = player_ball.y
 
-		if (moving_cooldown <= 0 and (player.shots + (player.bonus_shots or 0)) <= 0) next_player()
+		if moving_cooldown <= 0 then
+			if (player.shots + (player.bonus_shots or 0)) <= 0 then
+				next_player()
+			else
+				next_shot_same_player()
+			end
+		end
 
 	else
 		if x then
