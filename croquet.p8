@@ -141,6 +141,11 @@ function clip_num(val, minval, maxval)
 	return max(minval, min(maxval, val))
 end
 
+function lerp(a, b, t)
+	-- return a + t * (b - a)
+	return (1 - t) * a + t * b
+end
+
 function sort_z(items)
 	-- Bubblesort items by z value, or y value if z is not found
 	for idx1 = 1,#items do
@@ -704,8 +709,8 @@ function draw_shot()
 
 	-- Draw club
 
-	-- TODO: Haven't worked out a good way to draw this as solid without gaps at
-	-- some angles, so for now just draw outline
+	-- TODO: There can still sometimes be small gaps in this, figure out a better way to draw it
+	-- (Use a sprite rotation algo?)
 
 	local w, l, d = 1.5, 10, 4 + 5*shot_power*shot_power
 
@@ -716,28 +721,31 @@ function draw_shot()
 		{-w*dy - d*dx,      w*dx - d*dy},
 	}
 
-	-- for i=1,4 do
-	-- 	for j=1,2 do
-	-- 		c[i][j] = round(c[i][j])
-	-- 	end
-	-- end
+	for i=1,4 do
+		c[i][1] = round(x + c[i][1])
+		c[i][2] = round(y + c[i][2])
+	end
 
-	for idx=1,4 do
+	for i=0,3 do
 		line_round(
-			x + c[idx][1],
-			y + c[idx][2],
-			x + c[(idx%4)+1][1],
-			y + c[(idx%4)+1][2],
+			lerp(c[1][1], c[4][1], i/4), lerp(c[1][2], c[4][2], i/4),
+			c[2][1], c[2][2],
+			4)
+
+		line_round(
+			lerp(c[3][1], c[2][1], i/4), lerp(c[3][2], c[2][2], i/4),
+			c[4][1], c[4][2],
 			4)
 	end
+	line(c[1][1], c[1][2], c[4][1], c[4][2], 5)
+	line(c[2][1], c[2][2], c[3][1], c[3][2], 5)
+
+	for i in all({1, 4}) do
 	line_round(
-		x + (5*c[1][1] + c[2][1])/6, y + (5*c[1][2] + c[2][2])/6,
-		x + (5*c[4][1] + c[3][1])/6, y + (5*c[4][2] + c[3][2])/6,
+		lerp(c[1][1], c[2][1], i/5), lerp(c[1][2], c[2][2], i/5),
+		lerp(c[4][1], c[3][1], i/5), lerp(c[4][2], c[3][2], i/5),
 		player.color_main)
-	line_round(
-		x + (c[1][1] + 5*c[2][1])/6, y + (c[1][2] + 5*c[2][2])/6,
-		x + (c[4][1] + 5*c[3][1])/6, y + (c[4][2] + 5*c[3][2])/6,
-		player.color_main)
+	end
 end
 
 function draw_status_bar()
