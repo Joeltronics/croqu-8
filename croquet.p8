@@ -204,6 +204,22 @@ function dotpart(vx, vy, nx, ny)
 	return vx, vy
 end
 
+function ball_overlap(dx, dy)
+
+	-- Prevent overflow
+	if (abs(dx) + abs(dy) > 127) return 0, nil
+
+	local d2 = dx*dx + dy*dy
+
+	if (d2 and d2 <= BALL_D2) return 0, nil
+
+	local d = sqrt(d2)
+
+	local overlap = max(0, BALL_D + 1 - d) / d
+
+	return overlap, d
+end
+
 function ball_collisions()
 	-- Partially based on pico pool by nusan (CC4-BY-NC-SA)
 
@@ -214,53 +230,49 @@ function ball_collisions()
 		for idx2 = idx1+1, #balls do
 			local b2 = balls[idx2]
 
-			local dx, dy, d2 = b1.x - b2.x, b1.y - b2.y
+			local dx, dy = b1.x - b2.x, b1.y - b2.y
 
 			-- Prevent overflow
 			if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
 
-			if d2 and d2 <= BALL_D2 then
-				assert(d2 >= 0, 'd2=' .. d2)
+			overlap, d = ball_overlap(dx, dy)
+			
+			if overlap > 0 then
+				any_collisions = true
 
-				local d = sqrt(d2)
+				local push = 0.5 * overlap
 
-				-- TODO: is this right? It seems to work, but with wicket logic we needed not to divide by d
-				local push = max(0, BALL_D + 1 - d) * 0.5 / d
-				if push > 0 then
-					any_collisions = true
+				b1.x += dx*push
+				b1.y += dy*push
+				b2.x -= dx*push
+				b2.y -= dy*push
 
-					b1.x += dx*push
-					b1.y += dy*push
-					b2.x -= dx*push
-					b2.y -= dy*push
+				add(b1.collisions, {b2.x, b2.y})
+				add(b2.collisions, {b1.x, b1.y})
 
-					add(b1.collisions, {b2.x, b2.y})
-					add(b2.collisions, {b1.x, b1.y})
+				if (b1 == current_player.ball or b2 == current_player.ball) current_player_ball_collision()
 
-					if (b1 == current_player.ball or b2 == current_player.ball) current_player_ball_collision()
+				-- If no balls are moving, then we can skip this entirely
+				if moving_cooldown > 0 then
 
-					-- If no balls are moving, then we can skip this entirely
-					if moving_cooldown > 0 then
+					local nx, ny = dy / d, -dx / d
 
-						local nx, ny = dy / d, -dx / d
+					b1.vx *= VELOCITY_REDUCE_BALL_COLLISION
+					b1.vy *= VELOCITY_REDUCE_BALL_COLLISION
+					b2.vx *= VELOCITY_REDUCE_BALL_COLLISION
+					b2.vy *= VELOCITY_REDUCE_BALL_COLLISION
 
-						b1.vx *= VELOCITY_REDUCE_BALL_COLLISION
-						b1.vy *= VELOCITY_REDUCE_BALL_COLLISION
-						b2.vx *= VELOCITY_REDUCE_BALL_COLLISION
-						b2.vy *= VELOCITY_REDUCE_BALL_COLLISION
+					local dd1x, dd1y = dotpart(b1.vx, b1.vy, nx, ny)
+					local dd2x, dd2y = dotpart(b2.vx, b2.vy, nx, ny)
 
-						local dd1x, dd1y = dotpart(b1.vx, b1.vy, nx, ny)
-						local dd2x, dd2y = dotpart(b2.vx, b2.vy, nx, ny)
+					play_sound_ball_collision(
+						dd1x*dd1x + dd1y*dd1y + dd2x*dd2x + dd2y*dd2y
+					)
 
-						play_sound_ball_collision(
-							dd1x*dd1x + dd1y*dd1y + dd2x*dd2x + dd2y*dd2y
-						)
-
-						b1.vx += -dd1x + dd2x
-						b1.vy += -dd1y + dd2y
-						b2.vx += -dd2x + dd1x
-						b2.vy += -dd2y + dd1y
-					end
+					b1.vx += -dd1x + dd2x
+					b1.vy += -dd1y + dd2y
+					b2.vx += -dd2x + dd1x
+					b2.vy += -dd2y + dd1y
 				end
 			end
 		end
@@ -376,23 +388,16 @@ function resolve_all_static_collisions_for_ball(ball)
 			assert(b2)
 			if b2 != ball then
 
-				local dx, dy, d2 = ball.x - b2.x, ball.y - b2.y
+				local dx, dy = ball.x - b2.x, ball.y - b2.y
 
-				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
+				overlap, d = ball_overlap(dx, dy)
 
-				if d2 and d2 <= BALL_D2 then
-					assert(d2 >= 0, 'd2=' .. d2)
-
-					local d = sqrt(d2)
-					local push = max(0, BALL_D + 1 - d) / d
-
-					if push > 0 then
-						any_collisions = true
-						add(ball.collisions, {b2.x, b2.y})
-						add(b2.collisions, {ball.x, ball.y})
-						ball.x += dx*push
-						ball.y += dy*push
-					end
+				if overlap > 0 then
+					any_collisions = true
+					add(ball.collisions, {b2.x, b2.y})
+					add(b2.collisions, {ball.x, ball.y})
+					ball.x += dx*overlap
+					ball.y += dy*overlap
 				end
 			end
 		end
