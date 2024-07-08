@@ -51,6 +51,7 @@ WICKETS = {
 	{W1X, CY, reverse=true, hidden=true},
 	{PX, CY, reverse=true, pole=true, hidden=true},
 }
+WICKET_COLLISION_POINTS = {}  -- Populated at init
 
 --
 -- Physics consts
@@ -68,8 +69,8 @@ DRAG_ROUGH = 1 - 1/8
 V2_STOP_THRESH = 1/1024
 
 VELOCITY_REDUCE_BALL_COLLISION = 1 - 1/64
-VELOCITY_REDUCE_POLE_COLLISION = 1 - 1/64
-VELOCITY_REDUCE_WICKET_COLLISION = 1 - 1/8
+VELOCITY_REDUCE_POLE_COLLISION = 0.5
+VELOCITY_REDUCE_WICKET_COLLISION = 0.25
 
 BALL_STOP_RANDOM_MOVEMENT = 0.25
 
@@ -120,6 +121,7 @@ moving_cooldown = 0
 
 last_dv2 = nil
 
+debug_pause_physics = false
 debug_no_draw_tops = false
 debug_draw_primitives = false
 debug_increase_shot_pointer_length = false
@@ -193,16 +195,10 @@ function play_sound_ball_collision(dv2)
 	end
 end
 
-function play_sound_wicket_collision(wicket, ball)
-	local v2 = ball.vx*ball.vx + ball.vy*ball.vy
+function play_sound_wicket_collision(ball, is_pole)
+	-- local v2 = ball.vx*ball.vx + ball.vy*ball.vy
 
-	-- HACK: can get multiple collisions in a row, gate them to max 1 per second per ball
-	local now = time()
-	local time_ago = now - (ball.last_wicket_collision_time or 0)
-	if (0 <= time_ago and time_ago < 1) return
-	ball.last_wicket_collision_time = now
-
-	if wicket.pole then
+	if is_pole then
 		sfx(4)
 		sfx(5)
 	else
@@ -241,7 +237,7 @@ function ball_overlap(dx, dy)
 
 	local d = sqrt(d2)
 
-	local overlap = max(0, BALL_D + 1 - d) / d
+	local overlap = max(0, BALL_D + 0.25 - d) / d
 
 	return overlap, d
 end
@@ -273,8 +269,8 @@ function ball_collisions()
 				b2.x -= dx*push
 				b2.y -= dy*push
 
-				add(b1.collisions, {b2.x, b2.y})
-				add(b2.collisions, {b1.x, b1.y})
+				local coll1 = {x=b2.x, y=b2.y}
+				local coll2 = {x=b1.x, y=b1.y}
 
 				if (b1 == current_player.ball or b2 == current_player.ball) current_player_ball_collision()
 
@@ -282,6 +278,9 @@ function ball_collisions()
 				if moving_cooldown > 0 then
 
 					local nx, ny = dy / d, -dx / d
+
+					coll1.nx, coll1.ny = nx, ny
+					coll2.nx, coll2.ny = nx, ny
 
 					b1.vx *= VELOCITY_REDUCE_BALL_COLLISION
 					b1.vy *= VELOCITY_REDUCE_BALL_COLLISION
@@ -300,11 +299,65 @@ function ball_collisions()
 					b2.vx += -dd2x + dd1x
 					b2.vy += -dd2y + dd1y
 				end
+
+				add(b1.collisions, coll1)
+				add(b2.collisions, coll2)
 			end
 		end
 	end
 
 	return any_collisions
+end
+
+function check_wicket_collision(ball, w, dx, dy, d2)
+	assert(d2 >= 0, 'd2=' .. d2)
+
+	local d = sqrt(d2)
+	local push = max(0, BALL_POLE_D + 0.25 - d) / d
+
+	if (push <= 0) return false
+
+	local coll = {x=w.x, y=w.y}
+
+	ball.x += dx*push
+	ball.y += dy*push
+
+	if moving_cooldown > 0 then
+		play_sound_wicket_collision(ball, w.pole)
+
+		local nx, ny = dx / d, dy / d
+		coll.nx, coll.ny = nx, ny
+
+		assert(
+			-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
+			'dx=' .. dx ..
+			',dy=' .. dy ..
+			',d2=' .. d2 ..
+			',d=' .. d ..
+			',nx=' .. nx ..
+			',ny=' .. ny
+		)
+
+		local vel_reduce = VELOCITY_REDUCE_WICKET_COLLISION
+		if (w.pole) vel_reduce = VELOCITY_REDUCE_POLE_COLLISION
+
+		coll.vx_before, coll.vy_before = ball.vx, ball.vy
+
+		ball.vx *= vel_reduce
+		ball.vy *= vel_reduce
+
+		local vx, vy = ball.vx, ball.vy
+		local v_dot_n = vx * nx + vy * ny
+
+		ball.vx -= 2 * v_dot_n * nx
+		ball.vy -= 2 * v_dot_n * ny
+
+		coll.vx_after, coll.vy_after = ball.vx, ball.vy
+	end
+
+	add(ball.collisions, coll)
+
+	return true
 end
 
 function wicket_collisions()
@@ -315,71 +368,20 @@ function wicket_collisions()
 		local ball = player.ball
 		if ball then
 			local bx, by = ball.x, ball.y
-			for wicket_idx = 1,#WICKETS do
-				local w = WICKETS[wicket_idx]
+			for w in all(WICKET_COLLISION_POINTS) do
 
-				local wx = w[1]
+				local dx, dy, d2 = bx - w.x, by - w.y
+				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
 
-				local y_offs, vel_reduce
-				if w.pole then
-					y_offs = {0}
-					vel_reduce = VELOCITY_REDUCE_POLE_COLLISION
-				else
-					y_offs = {-5, 4}
-					vel_reduce = VELOCITY_REDUCE_WICKET_COLLISION
-				end
+				if d2 and d2 <= BALL_POLE_D2 then
+					assert(d2 >= 0, 'd2=' .. d2)
 
-				for y_off in all(y_offs) do
-					local wy = w[2] + y_off
+					if not w.hidden then
+						if (check_wicket_collision(ball, w, dx, dy, d2)) any_collisions = true
+					end
 
-					local dx, dy, d2 = bx - wx, by - wy
-
-					if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
-
-					if d2 and d2 <= BALL_POLE_D2 then
-						assert(d2 >= 0, 'd2=' .. d2)
-
-						local d = sqrt(d2)
-						local push = max(0, BALL_POLE_D - d)
-
-						if push > 0 then
-							any_collisions = true
-
-							add(ball.collisions, {wx, wy})
-
-							ball.x += dx*push
-							ball.y += dy*push
-
-							if moving_cooldown > 0 then
-								play_sound_wicket_collision(w, ball)
-
-								local nx, ny = dy / d, -dx / d
-
-								assert(
-									-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
-									'dx=' .. dx ..
-									',dy=' .. dy ..
-									',d2=' .. d2 ..
-									',d=' .. d ..
-									',nx=' .. nx ..
-									',ny=' .. ny
-								)
-
-								ball.vx *= vel_reduce
-								ball.vy *= vel_reduce
-
-								local vx, vy = ball.vx, ball.vy
-								local v_dot_n = vx * nx + vy * ny
-
-								ball.vx -= 2 * v_dot_n * nx
-								ball.vy -= 2 * v_dot_n * ny
-							end
-						end
-
-						if w.pole and wicket_idx == player.last_wicket_idx + 1 then
-							score_wicket(player)
-						end
-
+					if w.pole and w.idx == player.last_wicket_idx + 1 then
+						score_wicket(player)
 					end
 				end
 			end
@@ -420,8 +422,8 @@ function resolve_all_static_collisions_for_ball(ball)
 
 				if overlap > 0 then
 					any_collisions = true
-					add(ball.collisions, {b2.x, b2.y})
-					add(b2.collisions, {ball.x, ball.y})
+					add(ball.collisions, {x=b2.x, y=b2.y})
+					add(b2.collisions, {x=ball.x, y=ball.y})
 					ball.x += dx*overlap
 					ball.y += dy*overlap
 				end
@@ -525,8 +527,28 @@ function reset_ball(player)
 	resolve_all_static_collisions_for_ball(player.ball)
 end
 
+function add_wicket_collision_points(idx, wicket)
+	if wicket.pole then
+		add(WICKET_COLLISION_POINTS, { x=wicket[1], y=wicket[2], idx=idx, pole=true, hidden=wicket.hidden })
+	else
+		add(WICKET_COLLISION_POINTS, { x=wicket[1], y=wicket[2] - 5, idx=idx, hidden=wicket.hidden })
+		add(WICKET_COLLISION_POINTS, { x=wicket[1], y=wicket[2] + 4, idx=idx, hidden=wicket.hidden })
+	end
+end
+
 function _init()
-	players, balls = {}, {}
+	players, balls, WICKET_COLLISION_POINTS = {}, {}, {}
+
+	-- Add hidden wickets first
+	for idx = 1,#WICKETS do
+		local wicket = WICKETS[idx]
+		if (wicket.hidden) add_wicket_collision_points(idx, wicket)
+	end
+	for idx = 1,#WICKETS do
+		local wicket = WICKETS[idx]
+		if (not wicket.hidden) add_wicket_collision_points(idx, wicket)
+	end
+
 	for palette in all(PALETTES) do
 		add(players, {
 			palette=palette,
@@ -601,6 +623,7 @@ function _update60()
 		if (key == '1') debug_draw_primitives = not debug_draw_primitives
 		if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
 		if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
+		if (key == '=') debug_pause_physics = not debug_pause_physics
 
 		if moving_cooldown <= 0 then
 
@@ -629,50 +652,54 @@ function _update60()
 	if (op and moving_cooldown <= 0) launch_ball()
 
 	if moving_cooldown > 0 then
-		-- Process physics
 
-		moving_cooldown -= 1
+		if (not debug_pause_physics) or op then
 
-		-- TODO optimization: keep a list of moving players, only iterate those
-		-- TODO optimization: when looping through each ball, make a list of close players & wickets
-		-- (with simpler check, e.g. abs(dx)+abs(dy)), then these are the only ones that get checked for collisions
+			-- Process physics
 
-		for ball in all(balls) do
-			ball.x_prev = ball.x
-			ball.y_prev = ball.y
-			ball.collisions = {}
-		end
+			moving_cooldown -= 1
 
-		for idx=1,COLLISION_CHECK_DIVISIONS do
+			-- TODO optimization: keep a list of moving players, only iterate those
+			-- TODO optimization: when looping through each ball, make a list of close players & wickets
+			-- (with simpler check, e.g. abs(dx)+abs(dy)), then these are the only ones that get checked for collisions
+
+			for ball in all(balls) do
+				ball.x_prev = ball.x
+				ball.y_prev = ball.y
+				ball.collisions = {}
+			end
+
+			for idx=1,COLLISION_CHECK_DIVISIONS do
+				for ball in all(balls) do
+					if ball.vx != 0 or ball.vy != 0 then
+						ball.x += ball.vx / COLLISION_CHECK_DIVISIONS
+						ball.y += ball.vy / COLLISION_CHECK_DIVISIONS
+					end
+				end
+				if (collisions()) moving_cooldown = MOVING_COOLDOWN_FRAMES
+			end
+
 			for ball in all(balls) do
 				if ball.vx != 0 or ball.vy != 0 then
-					ball.x += ball.vx / COLLISION_CHECK_DIVISIONS
-					ball.y += ball.vy / COLLISION_CHECK_DIVISIONS
+
+					local drag = DRAG
+					if (ball.x < ROUGH or ball.y < ROUGH or ball.x >= WIDTH-ROUGH or ball.y >= HEIGHT-ROUGH) drag = DRAG_ROUGH
+
+					ball.vx *= drag
+					ball.vy *= drag
+
+					local v2 = ball.vx*ball.vx + ball.vy*ball.vy
+					if (v2 <= V2_STOP_THRESH) then
+						-- Stop ball
+
+						-- Move ball slightly when it stops
+						-- TODO: Add ball spin, and make this depend on it
+						ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+						ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+						ball.vx, ball.vy = 0, 0
+					end
+					moving_cooldown = MOVING_COOLDOWN_FRAMES
 				end
-			end
-			if (collisions()) moving_cooldown = MOVING_COOLDOWN_FRAMES
-		end
-
-		for ball in all(balls) do
-			if ball.vx != 0 or ball.vy != 0 then
-
-				local drag = DRAG
-				if (ball.x < ROUGH or ball.y < ROUGH or ball.x >= WIDTH-ROUGH or ball.y >= HEIGHT-ROUGH) drag = DRAG_ROUGH
-
-				ball.vx *= drag
-				ball.vy *= drag
-
-				local v2 = ball.vx*ball.vx + ball.vy*ball.vy
-				if (v2 <= V2_STOP_THRESH) then
-					-- Stop ball
-
-					-- Move ball slightly when it stops
-					-- TODO: Add ball spin, and make this depend on it
-					ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-					ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-					ball.vx, ball.vy = 0, 0
-				end
-				moving_cooldown = MOVING_COOLDOWN_FRAMES
 			end
 		end
 
@@ -956,23 +983,36 @@ function _draw()
 	pal()
 
 	if debug_draw_primitives then
-		for w in all(WICKETS) do
-			if w.pole then
-				pset(w[1], w[2], 8)
-			else
-				pset(w[1], w[2] - 5, 9)
-				pset(w[1], w[2] + 4, 9)
-			end
+		for ball in all(balls) do
+			line_round(
+				ball.x,
+				ball.y,
+				ball.x + 30*ball.vx,
+				ball.y + 30*ball.vy,
+				11)
 		end
 
 		for ball in all(balls) do
 			for coll in all(ball.collisions) do
-				line_round(
-					ball.x, ball.y,
-					coll[1], coll[2],
-					11
-				)
+
+				-- Normal: orange
+				if (coll.nx) line_round(ball.x, ball.y, ball.x + 16*coll.nx, ball.y + 16*coll.ny, 9)
+
+				-- v before: blue
+				if (coll.vx_before) line_round(ball.x, ball.y, ball.x - 30 * coll.vx_before, ball.y - 30*coll.vy_before, 12)
+
+				-- v after: red
+				if (coll.vx_after) line_round(ball.x, ball.y, ball.x + 30 * coll.vx_after, ball.y + 30*coll.vy_after, 8)
+
+				line_round(ball.x, ball.y, coll.x, coll.y, 14)
 			end
+		end
+
+		for w in all(WICKET_COLLISION_POINTS) do
+			local col = 9
+			if (w.pole) col = 8
+			if (w.hidden) col = 6
+			pset(w.x, w.y, col)
 		end
 	end
 
@@ -988,7 +1028,13 @@ function _draw()
 	--
 
 	if DEBUG then
+
+		if debug_pause_physics then
+			print_centered('paused', 64, 0, 8)
+		end
+
 		cursor(96, 1, 8)
+
 		-- print('mem:' .. stat(0))
 		local cpu = stat(1)
 		-- local cpu_draw = cpu - cpu_update
