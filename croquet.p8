@@ -236,7 +236,7 @@ function ball_overlap(dx, dy)
 
 	local d2 = dx*dx + dy*dy
 
-	if (d2 and d2 <= BALL_D2) return 0, nil
+	if (d2 and d2 > BALL_D2) return 0, nil
 
 	local d = sqrt(d2)
 
@@ -257,11 +257,18 @@ function ball_collisions()
 
 			local dx, dy = b1.x - b2.x, b1.y - b2.y
 
+			if dx == 0 and dy == 0 then
+				-- Balls are on exactly the same spot, would get divide by zero
+				b1.y -= 0.5
+				b2.y += 0.5
+				dy = b1.y - b2.y
+			end
+
 			-- Prevent overflow
 			if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
 
 			overlap, d = ball_overlap(dx, dy)
-			
+
 			if overlap > 0 then
 				any_collisions = true
 
@@ -277,7 +284,7 @@ function ball_collisions()
 
 				if (b1 == current_player.ball or b2 == current_player.ball) current_player_ball_collision()
 
-				-- If no balls are moving, then we can skip this entirely
+				-- If no balls are moving, then we can skip this part entirely
 				if moving_cooldown > 0 then
 
 					local nx, ny = dy / d, -dx / d
@@ -370,10 +377,16 @@ function wicket_collisions()
 	for player in all(players) do
 		local ball = player.ball
 		if ball then
-			local bx, by = ball.x, ball.y
 			for w in all(WICKET_COLLISION_POINTS) do
 
-				local dx, dy, d2 = bx - w.x, by - w.y
+				local dx, dy, d2 = ball.x - w.x, ball.y - w.y
+
+				if dx == 0 and dy == 0 then
+					-- Ball is on exactly the same spot, would get divide by zero
+					ball.y += 1
+					dy = ball.y - w.y
+				end
+
 				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
 
 				if d2 and d2 <= BALL_POLE_D2 then
@@ -409,7 +422,9 @@ end
 
 function resolve_all_static_collisions_for_ball(ball)
 
-	for i = 1,100 do
+	local x_orig, y_orig, stuck_counter = ball.x, ball.y, 0
+
+	for i = 1,200 do
 		local any_collisions = wicket_collisions()
 
 		-- This logic needs to be slightly different from regular ball collisions
@@ -421,7 +436,13 @@ function resolve_all_static_collisions_for_ball(ball)
 
 				local dx, dy = ball.x - b2.x, ball.y - b2.y
 
-				overlap, d = ball_overlap(dx, dy)
+				if dx == 0 and dy == 0 then
+					-- Balls are on exactly the same spot, would get divide by zero
+					ball.y += 1
+					dy = ball.y - b2.y
+				end
+
+				local overlap, d = ball_overlap(dx, dy)
 
 				if overlap > 0 then
 					any_collisions = true
@@ -434,6 +455,14 @@ function resolve_all_static_collisions_for_ball(ball)
 		end
 
 		if (not any_collisions) return
+
+		if i % 10 == 0 then
+			-- If hitting lots of iterations, might be stuck between other balls/objects
+			-- Move ball a random distance away from original position, increasing each time
+			stuck_counter += 1
+			ball.x = x_orig + 2 * stuck_counter * (rnd() - 0.5)
+			ball.y = y_orig + 2 * stuck_counter * (rnd() - 0.5)
+		end
 	end
 
 	assert(false, "resolve_all_static_collisions_for_ball hit iteration limit")
@@ -466,8 +495,8 @@ function next_player()
 
 	if player_idx then
 		player = players[player_idx]
-		assert(player.shots == 0, 'player.shots='..player.shots)
-		assert(player.bonus_shots == 0 or not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
+		player.shots = 0
+		if (player.bonus_shots) player.bonus_shots = 0
 	else
 		player_idx = 0
 	end
@@ -479,7 +508,7 @@ function next_player()
 	next_shot_same_player()
 
 	assert(player.shots == 0, 'player.shots='..player.shots)
-	assert(not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
+	assert((not player.bonus_shots) or (player.bonus_shots == 0), 'player.bonus_shots='..(player.bonus_shots or 'nil'))
 	player.shots = 1
 
 	if (not player.ball) reset_ball(player)
@@ -582,6 +611,7 @@ function check_wickets(player)
 		if x == wx then
 			-- In case ball is stopped exactly on wicket
 			-- (Could handle this with conditions below, but this is more mistake-proof)
+			-- FIXME: technically this could trigger a wicket when going the wrong direction
 			through = true
 		elseif w.reverse then
 			if (xp >= wx and x < wx) through = true
@@ -636,6 +666,7 @@ function _update60()
 			if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
 			if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
 			if (key == '=') debug_pause_physics = not debug_pause_physics
+			if (key == ']') next_player()
 
 			if moving_cooldown <= 0 then
 
@@ -690,6 +721,10 @@ function _update60()
 		shot_power = clip_num(shot_power, 0, 1)
 	end
 
+	for ball in all(balls) do
+		ball.collisions = {}
+	end
+
 	if moving_cooldown > 0 then
 
 		if (not debug_pause_physics) or op then
@@ -705,7 +740,6 @@ function _update60()
 			for ball in all(balls) do
 				ball.x_prev = ball.x
 				ball.y_prev = ball.y
-				ball.collisions = {}
 			end
 
 			for idx=1,COLLISION_CHECK_DIVISIONS do
