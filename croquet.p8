@@ -18,6 +18,9 @@ BALL_POLE_D = BALL_R + 0.125
 BALL_POLE_D2 = BALL_POLE_D*BALL_POLE_D
 
 MOVING_COOLDOWN_FRAMES = 60
+SHOT_POWER_METER_RATE = 1/64
+SHOT_POWER_METER_FALL_RATE = -1/32
+SHOT_POWER_ERR_OVER = 15/360
 
 ROUGH = 16
 
@@ -59,8 +62,6 @@ WICKET_COLLISION_POINTS = {}  -- Populated at init
 
 COLLISION_CHECK_DIVISIONS = 4
 
-DEFAULT_SHOT_POWER = 0.5
-
 SHOT_V_MAX = 1.5
 SHOT_V_MIN = 0.0625
 
@@ -98,7 +99,7 @@ PALETTES = {
 	{[8]=9, [2]=4, [14]=10}, -- Orange
 }
 
-SHOT_POWER_COLORS = {1, 12, 11, 10, 9, 8}
+SHOT_POWER_COLORS = {1, 12, 11, 10, 9}
 
 --
 -- Globals
@@ -113,7 +114,9 @@ camera_x = 64
 camera_y = CY
 
 shot_angle = 0
-shot_power = DEFAULT_SHOT_POWER
+shot_power = 0
+shot_power_change = 0
+shot_power_over = false
 
 moving_cooldown = 0
 
@@ -168,6 +171,8 @@ function sort_z(items)
 end
 
 function shot_power_color()
+	if (shot_power <= 0) return 0
+	if (shot_power_over) return 8
 	return SHOT_POWER_COLORS[clip_num(flr(shot_power * #SHOT_POWER_COLORS) + 1, 1, #SHOT_POWER_COLORS)]
 end
 
@@ -449,8 +454,9 @@ end
 
 function next_shot_same_player()
 	reset_off_screen_balls()
-	shot_power = DEFAULT_SHOT_POWER
+	shot_power = 0
 	shot_angle = 0
+	shot_power_change = 0
 	if (WICKETS[players[player_idx].last_wicket_idx + 1].reverse) shot_angle = 0.5
 end
 
@@ -466,15 +472,11 @@ function next_player()
 		player_idx = 0
 	end
 
-	reset_off_screen_balls()
-
 	player_idx %= #PALETTES
 	player_idx += 1
 	player = players[player_idx]
 
-	shot_power = DEFAULT_SHOT_POWER
-	shot_angle = 0
-	if (WICKETS[players[player_idx].last_wicket_idx + 1].reverse) shot_angle = 0.5
+	next_shot_same_player()
 
 	assert(player.shots == 0, 'player.shots='..player.shots)
 	assert(not player.bonus_shots, 'player.bonus_shots='..(player.bonus_shots or 'nil'))
@@ -592,7 +594,18 @@ end
 
 function launch_ball()
 
-	-- TODO: add slight randomness to angle, depending on power
+	if shot_power_over then
+		-- Add error
+		local angle_rand = rnd() - 0.5
+		-- Range is [0.5, 0.5)
+		if (abs(angle_rand) < 0.25) angle_rand *= 2
+		-- Range is still [0.5, 0.5), but biased away from center
+		angle_rand *= 2 * SHOT_POWER_ERR_OVER
+		-- Range is [-SHOT_POWER_ERR_OVER, SHOT_POWER_ERR_OVER), biased away from center
+		shot_angle += angle_rand
+	end
+
+	shot_angle = round((shot_angle * 256) % 256) / 256
 
 	local player = players[player_idx]
 	local dx, dy = cos(shot_angle), sin(shot_angle)
@@ -616,38 +629,66 @@ function _update60()
 	local player = players[player_idx]
 	local player_ball, op, x = player.ball, btnp(4), btn(5)
 
-	while stat(30) do
-		local key = stat(31)
-		if (key == '1') debug_draw_primitives = not debug_draw_primitives
-		if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
-		if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
-		if (key == '=') debug_pause_physics = not debug_pause_physics
+	if DEBUG then
+		while stat(30) do
+			local key = stat(31)
+			if (key == '1') debug_draw_primitives = not debug_draw_primitives
+			if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
+			if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
+			if (key == '=') debug_pause_physics = not debug_pause_physics
 
-		if moving_cooldown <= 0 then
+			if moving_cooldown <= 0 then
 
-			local moved = false
+				local moved = false
 
-			if key == 'h' then
-				player_ball.x -= 1
-				moved = true
-			elseif key == 'j' then
-				player_ball.y += 1
-				moved = true
-			elseif key == 'k' then
-				player_ball.y -= 1
-				moved = true
-			elseif key == 'l' then
-				player_ball.x += 1
-				moved = true
+				if key == 'h' then
+					player_ball.x -= 1
+					moved = true
+				elseif key == 'j' then
+					player_ball.y += 1
+					moved = true
+				elseif key == 'k' then
+					player_ball.y -= 1
+					moved = true
+				elseif key == 'l' then
+					player_ball.x += 1
+					moved = true
+				end
+
+				if (moved) resolve_all_static_collisions_for_ball(player_ball)
 			end
-
-			if (moved) resolve_all_static_collisions_for_ball(player_ball)
 		end
-
 	end
 
-	-- TODO: use timing-based power meter instead
-	if (op and moving_cooldown <= 0) launch_ball()
+	if moving_cooldown <= 0 then
+
+		if op then
+			if shot_power_change > 0 then
+				-- Shot power meter rising
+				launch_ball()
+				shot_power_change = 0
+			elseif shot_power_change < 0 then
+				-- Shot power meter falling
+				launch_ball()
+				shot_power_change = 0
+			else
+				-- Shot power = 0, start shot power meter
+				shot_power_change = SHOT_POWER_METER_RATE
+			end
+		end
+
+		shot_power += shot_power_change
+
+		if shot_power >= 1 then
+			shot_power_change = SHOT_POWER_METER_FALL_RATE
+			shot_power_over = true
+		elseif shot_power <= 0 then
+			shot_power_change = 0
+			shot_power_over = false
+		end
+
+		shot_power = clip_num(shot_power, 0, 1)
+	end
 
 	if moving_cooldown > 0 then
 
@@ -726,14 +767,13 @@ function _update60()
 		else
 			camera_x = player.ball.x
 			camera_y = player.ball.y
-			if (btn(0)) shot_angle += 1/256  -- left
-			if (btn(1)) shot_angle -= 1/256  -- right
-			if (btn(2)) shot_power += 1/64  -- up
-			if (btn(3)) shot_power -= 1/64  -- down
+			if shot_power_change == 0 then
+				if (btn(0)) shot_angle += 1/256  -- left
+				if (btn(1)) shot_angle -= 1/256  -- right
+			end
 		end
 
 		shot_angle = round((shot_angle * 256) % 256) / 256
-		shot_power = clip_num(shot_power, 0, 1)
 	end
 
 	moving_cooldown = max(moving_cooldown, 0)
@@ -751,7 +791,7 @@ function draw_shot()
 
 	-- Draw line
 
-	local l = 16
+	local l = 24
 	if (debug_increase_shot_pointer_length) l = 256
 
 	line_round(x, y, x + l*dx, y + l*dy, shot_power_color())
@@ -761,7 +801,7 @@ function draw_shot()
 	-- TODO: There can still sometimes be small gaps in this, figure out a better way to draw it
 	-- (Use a sprite rotation algo?)
 
-	local w, l, d = 1.5, 10, 4 + 5*shot_power*shot_power
+	local w, l, d = 1.5, 10, 4 + 5*shot_power
 
 	local c = {
 		{ w*dy - d*dx,     -w*dx - d*dy},
@@ -842,7 +882,7 @@ function draw_status_bar()
 		end
 	end
 
-	if moving_cooldown <= 0 then
+	if shot_power > 0 or shot_power_change != 0 then
 		-- Shot power meter
 		rectfill(3, 125 - 60*shot_power, 5, 127, shot_power_color())
 		rect(2, 64, 6, 128, 0)
