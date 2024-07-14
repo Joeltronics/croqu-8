@@ -79,6 +79,8 @@ BALL_STOP_RANDOM_MOVEMENT = 0.25
 -- Graphics Consts
 --
 
+TITLE_SCREEN_STRIPES = 3 -- The actual number is 2*TITLE_SCREEN_STRIPES + 1
+
 DEFAULT_PALT = 0b0001000000000000
 
 DISPLAY_PALETTE = {
@@ -106,6 +108,8 @@ SHOT_POWER_COLORS = {1, 12, 11, 10, 9}
 --
 -- Globals
 --
+
+game_started = false
 
 players = {}
 balls = {}
@@ -476,6 +480,96 @@ function resolve_all_static_collisions_for_ball(ball)
 end
 
 --
+-- Title screen
+--
+
+function update_title_screen()
+
+	local op = btnp(4)
+
+	-- TODO: title screen logic (select number of players, etc)
+
+	if op then
+		game_started = true
+	end
+end
+
+function draw_title_screen()
+	camera()
+
+	-- Background
+
+	rectfill(0, 0, 127, 31, 12)
+	fillp(0b0101101001011010)
+	rectfill(0, 32, 127, 127, 0xD3)
+	fillp()
+
+	for y=33,127 do
+
+		local w = 0.5 * (y - 32)
+		local d = 1/w
+
+		local stripe = ((128 * d + 1.5) % 2) >= 1
+		if (y <= 48) stripe = (y % 2) < 1
+
+		if stripe then
+			for idx=-TITLE_SCREEN_STRIPES,TITLE_SCREEN_STRIPES do
+				local x = 64 - 2*idx*w
+				line(x - w, y, x - 1, y, 0xD)
+			end
+		else
+			for idx=-TITLE_SCREEN_STRIPES,TITLE_SCREEN_STRIPES do
+				local x = 64 - 2*idx*w
+				line(x, y, x + w - 1, y, 0x3)
+			end
+		end
+	end
+
+	-- Text besides players
+
+	print_centered('croqu-8', 64, 14, 7)
+
+	if (time() % 1.0) > 0.5 then
+		print_centered('press 🅾️', 64, 110, 7)
+	end
+
+	-- Pole
+
+	local x1, x2, y1 = 16, 20, 48
+
+	rectfill(x1, y1, x2, 128, 4)
+	line(x1, y1, x1, 128, 9)
+	line(x1, y1, x2, y1, 9)
+	line(x2, y1, x2, 128, 2)
+	pset(x1, y1, 10)
+	pset(x2, y1, 4)
+
+	pal()
+	palt()
+	spr(54, x1 - 1, 124, 2, 1)
+	reset_palette()
+
+	-- Stripes & player info
+
+	for idx = 1,#players do
+		local p = players[idx]
+
+		local py1 = y1 + 7*idx - 1
+		local py2 = py1 + 5
+
+		rectfill(x1 + 1, py1, x2 - 1, py2, p.color_main)
+		line(x1, py1, x1, py2, p.color_light)
+		line(x2, py1, x2, py2, p.color_dark)
+
+		-- TODO: print which players are enabled (or CPU, once that's implemented)
+	end
+
+	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
+
+	pal(DISPLAY_PALETTE, 1)
+end
+
+--
 -- Game logic
 --
 
@@ -662,6 +756,11 @@ function launch_ball()
 end
 
 function _update60()
+
+	if not game_started then
+		update_title_screen()
+		return
+	end
 
 	local player = players[player_idx]
 	local player_ball, op, x = player.ball, btnp(4), btn(5)
@@ -898,8 +997,8 @@ function draw_status_bar()
 	line(STATUS_BAR_WIDTH, 1, STATUS_BAR_WIDTH, 128, 2)
 	line(0, 1, 0, 128, 9)
 	line(0, 0, STATUS_BAR_WIDTH, 0, 9)
+	pset(0, 0, 10)
 	pset(STATUS_BAR_WIDTH, 0, 4)
-	pset(0, 0, 6)
 
 	for idx = 1,#players do
 		local p = players[idx]
@@ -962,6 +1061,11 @@ end
 function _draw()
 
 	reset_palette()
+
+	if not game_started then
+		draw_title_screen()
+		return
+	end
 
 	local player, sprites, x, y = players[player_idx], {}
 	local next_wicket = WICKETS[player.last_wicket_idx + 1]

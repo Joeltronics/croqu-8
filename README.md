@@ -26,8 +26,6 @@ Choose where to start ball
 
 End-game logic
 
-Add title screen
-
 Select number of players and colors
 
 Add CPU players
