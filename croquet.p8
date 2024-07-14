@@ -710,6 +710,16 @@ function _update60()
 				-- Shot power = 0, start shot power meter
 				shot_power_change = SHOT_POWER_METER_RATE
 			end
+
+			if shot_power_change == 0 then
+				-- Re-enable key repeat
+				poke(0x5f5c, 0)
+				poke(0x5f5d, 0)
+			else
+				-- Disable key repeat
+				poke(0x5f5c, 255)
+				poke(0x5f5d, 255)
+			end
 		end
 
 		shot_power += shot_power_change
