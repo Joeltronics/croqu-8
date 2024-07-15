@@ -26,8 +26,15 @@ Choose where to start ball
 
 End-game logic
 
-Select number of players and colors
+More sound effects
 
 Add CPU players
 
 Fix 1-pixel gaps when drawing club
+
+Possibly some performance or token count optimizations (although so far, neither seems necessary)
+
+"Maybe later" features:
+
+- Teams (pairs) mode
+- Optional "Garden croquet" layout & rules (the current is "lawn croquet")

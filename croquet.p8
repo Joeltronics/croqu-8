@@ -109,12 +109,14 @@ SHOT_POWER_COLORS = {1, 12, 11, 10, 9}
 -- Globals
 --
 
+num_players = 6
+
 game_started = false
 
 players = {}
 balls = {}
 
-player_idx = nil
+player_idx = 1
 
 camera_x = 64
 camera_y = CY
@@ -485,11 +487,42 @@ end
 
 function update_title_screen()
 
-	local op = btnp(4)
+	local player = players[player_idx]
 
-	-- TODO: title screen logic (select number of players, etc)
+	if btnp(0) or btnp(1) then
+		-- Left/Right
+		player.enabled = not player.enabled
 
-	if op then
+		num_players = 0
+		for p in all(players) do
+			if (p.enabled) num_players += 1
+		end
+	end
+
+	if btnp(2) then
+		-- Up
+		player_idx -= 2
+		player_idx %= 6
+		player_idx += 1
+	end
+	if btnp(3) then
+		-- Down
+		player_idx %= 6
+		player_idx += 1
+	end
+
+	if (num_players > 0) and btnp(4) then
+
+		-- player_idx = ceil(rnd(#players)) would work - next_player() will skip to next valid
+		-- but this would not be fair when not using all players
+		local valid_player_idxs = {}
+		for idx = 1,#players do
+			if (players[idx].enabled) add(valid_player_idxs, idx)
+		end
+		player_idx = valid_player_idxs[ceil(rnd(#valid_player_idxs))]
+
+		next_player()
+
 		game_started = true
 	end
 end
@@ -529,13 +562,13 @@ function draw_title_screen()
 
 	print_centered('croqu-8', 64, 14, 7)
 
-	if (time() % 1.0) > 0.5 then
-		print_centered('press 🅾️', 64, 110, 7)
+	if (num_players > 0) and (time() % 1.0) > 0.5 then
+		print_centered('press 🅾️', 64, 100, 7)
 	end
 
 	-- Pole
 
-	local x1, x2, y1 = 16, 20, 48
+	local x1, x2, y1 = 30, 34, 48
 
 	rectfill(x1, y1, x2, 128, 4)
 	line(x1, y1, x1, 128, 9)
@@ -561,7 +594,20 @@ function draw_title_screen()
 		line(x1, py1, x1, py2, p.color_light)
 		line(x2, py1, x2, py2, p.color_dark)
 
-		-- TODO: print which players are enabled (or CPU, once that's implemented)
+		local col = p.color_main
+		if (col == 11) col = 7
+
+		if p.enabled then
+			print_centered('player', 64, py1, col)
+		else
+			print_centered('off', 64, py1, 0)
+		end
+
+		if idx == player_idx then
+			print('⬅️', 64 - 20 - 4, py1, 7)
+			print('➡️', 64 + 20 - 4, py1, 7)
+		end
+
 	end
 
 	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
@@ -592,25 +638,29 @@ end
 
 function next_player()
 
-	local player
+	local player = players[player_idx]
+	player.shots = 0
+	if (player.bonus_shots) player.bonus_shots = 0
 
-	if player_idx then
+	local n_iter = 0
+	while true do
+		player_idx %= #players
+		player_idx += 1
 		player = players[player_idx]
-		player.shots = 0
-		if (player.bonus_shots) player.bonus_shots = 0
-	else
-		player_idx = 0
-	end
 
-	player_idx %= #PALETTES
-	player_idx += 1
-	player = players[player_idx]
+		if (player.enabled) break
+
+		n_iter += 1
+		assert(n_iter <= #players)
+	end
 
 	next_shot_same_player()
 
+	assert(player.enabled)
 	assert(player.shots == 0, 'player.shots='..player.shots)
 	assert((not player.bonus_shots) or (player.bonus_shots == 0), 'player.bonus_shots='..(player.bonus_shots or 'nil'))
 	player.shots = 1
+	if (player.bonus_shots) player.bonus_shots = 0
 
 	if (not player.ball) reset_ball(player)
 
@@ -679,20 +729,20 @@ function _init()
 		if (not wicket.hidden) add_wicket_collision_points(idx, wicket)
 	end
 
-	for palette in all(PALETTES) do
+	for idx = 1,#PALETTES do
+		local palette = PALETTES[idx]
 		add(players, {
+			ball=nil,
+			enabled=idx <= 4,
 			palette=palette,
 			color_main=palette[8],
 			color_light=palette[14],
 			color_dark=palette[2],
 			last_wicket_idx=1,
 			shots=0,
-			-- bonus_shots=nil,
+			bonus_shots=nil,
 		})
 	end
-
-	player_idx = nil
-	next_player()
 
 	cls()
 	if (DEBUG) poke(0x5F2D, 1)  -- enable keyboard
@@ -939,6 +989,7 @@ end
 
 function draw_shot()
 	local player = players[player_idx]
+	assert(player.ball)
 	local x, y = player.ball.x, player.ball.y
 	if (not x) return -- HACK: this shouldn't be needed
 	local dx, dy = cos(shot_angle), sin(shot_angle)
@@ -1013,7 +1064,7 @@ function draw_status_bar()
 		line(0, y1, 0, y2, p.color_light)
 		line(STATUS_BAR_WIDTH, y1, STATUS_BAR_WIDTH, y2, p.color_dark)
 
-		print_centered(players[idx].last_wicket_idx - 1, 5, y1+1, textcol)
+		if (p.enabled) print_centered(p.last_wicket_idx - 1, 5, y1+1, textcol)
 
 		if idx == player_idx then
 
