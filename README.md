@@ -28,8 +28,6 @@ End-game logic
 
 More sound effects
 
-Add CPU players
-
 Fix 1-pixel gaps when drawing club
 
 Possibly some performance or token count optimizations (although so far, neither seems necessary)

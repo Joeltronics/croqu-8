@@ -22,6 +22,12 @@ SHOT_POWER_METER_RATE = 1/64
 SHOT_POWER_METER_FALL_RATE = -1/32
 SHOT_POWER_ERR_OVER = 15/360
 
+ANGLE_STEP = 1/256
+
+--
+-- Field dimensions & wicket locations
+--
+
 ROUGH = 16
 
 WIDTH, HEIGHT = 384 + 2*ROUGH, 192+2*ROUGH
@@ -74,6 +80,18 @@ VELOCITY_REDUCE_POLE_COLLISION = 0.5
 VELOCITY_REDUCE_WICKET_COLLISION = 0.25
 
 BALL_STOP_RANDOM_MOVEMENT = 0.25
+
+--
+-- AI logic consts
+--
+
+AI_TARGET_PAST_WICKET_POLE_DISTANCE = 4
+AI_TARGET_PAST_BALL_DISTANCE = 8
+AI_TOO_STEEP_MARGIN = 20
+AI_TARGET_AHEAD_OF_WICKET_DISTANCE = 8
+AI_CLEAR_SHOT_MIN_BALL_DISTANCE = 64
+AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED = AI_CLEAR_SHOT_MIN_BALL_DISTANCE * AI_CLEAR_SHOT_MIN_BALL_DISTANCE
+AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE = 128
 
 --
 -- Graphics Consts
@@ -166,6 +184,26 @@ function lerp(a, b, t)
 	return (1 - t) * a + t * b
 end
 
+function distance(dx, dy)
+	-- Calculate distance, overflow-safe
+	-- Exact distance when close, approximate distance when further
+
+	dx = abs(dx)
+	dy = abs(dy)
+
+	local d
+
+	if (dx > 127 or dy > 127) then
+		d = dx + dy
+	else
+		d = sqrt(dx*dx + dy*dy)
+	end
+
+	if (d < 0) d = 32767
+
+	return d
+end
+
 function sort_z(items)
 	-- Bubblesort items by z value, or y value if z is not found
 	for idx1 = 1,#items do
@@ -245,13 +283,15 @@ end
 function ball_overlap(dx, dy)
 
 	-- Prevent overflow
-	if (abs(dx) + abs(dy) > 127) return 0, nil
+	-- if (abs(dx) + abs(dy) > 127) return 0, nil
 
-	local d2 = dx*dx + dy*dy
+	-- local d2 = dx*dx + dy*dy
 
-	if (d2 and d2 > BALL_D2) return 0, nil
+	-- if (d2 and d2 > BALL_D2) return 0, nil
 
-	local d = sqrt(d2)
+	-- local d = sqrt(d2)
+
+	local d = distance(dx, dy)
 
 	local overlap = max(0, BALL_D + 0.25 - d) / d
 
@@ -489,14 +529,32 @@ function update_title_screen()
 
 	local player = players[player_idx]
 
-	if btnp(0) or btnp(1) then
-		-- Left/Right
-		player.enabled = not player.enabled
-
-		num_players = 0
-		for p in all(players) do
-			if (p.enabled) num_players += 1
+	if btnp(0) then
+		-- Left
+		if player.cpu then
+			player.cpu = false
+		elseif player.enabled then
+			player.enabled = false
+		else
+			player.enabled = true
+			player.cpu = true
 		end
+	end
+	if btnp(1) then
+		-- Right
+		if player.cpu then
+			player.enabled = false
+			player.cpu = false
+		elseif player.enabled then
+			player.cpu = true
+		else
+			player.enabled = true
+		end
+	end
+
+	num_players = 0
+	for p in all(players) do
+		if (p.enabled) num_players += 1
 	end
 
 	if btnp(2) then
@@ -572,10 +630,10 @@ function draw_title_screen()
 
 	rectfill(x1, y1, x2, 128, 4)
 	line(x1, y1, x1, 128, 9)
-	line(x1, y1, x2, y1, 9)
 	line(x2, y1, x2, 128, 2)
-	pset(x1, y1, 10)
-	pset(x2, y1, 4)
+	rectfill(x1+1, y1-2, x2-1, y1, 10)
+	pset(x1, y1-1, 10)
+	pset(x2, y1-1, 10)
 
 	pal()
 	palt()
@@ -587,18 +645,22 @@ function draw_title_screen()
 	for idx = 1,#players do
 		local p = players[idx]
 
-		local py1 = y1 + 7*idx - 1
+		local py1 = y1 + 7*idx
 		local py2 = py1 + 5
 
 		rectfill(x1 + 1, py1, x2 - 1, py2, p.color_main)
-		line(x1, py1, x1, py2, p.color_light)
-		line(x2, py1, x2, py2, p.color_dark)
+		line(x1, py1-1, x1, py2-1, p.color_light)
+		line(x2, py1-1, x2, py2-1, p.color_dark)
 
 		local col = p.color_main
 		if (col == 11) col = 7
 
 		if p.enabled then
-			print_centered('player', 64, py1, col)
+			if p.cpu then
+				print_centered('cpu', 64, py1, col)
+			else
+				print_centered('player', 64, py1, col)
+			end
 		else
 			print_centered('off', 64, py1, 0)
 		end
@@ -613,6 +675,314 @@ function draw_title_screen()
 	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
 
 	pal(DISPLAY_PALETTE, 1)
+end
+
+--
+-- CPU AI logic
+--
+
+function set_cpu_target()
+	local player = players[player_idx]
+	local player_ball, next_wicket = player.ball, WICKETS[player.last_wicket_idx + 1]
+
+	local tx, ty = next_wicket[1], next_wicket[2]
+	local dx, dy = tx - player_ball.x, ty - player_ball.y
+	local d = distance(dx, dy)
+
+	-- Determine a few flags that will be used later
+	local easy_shot, wrong_side, too_steep = cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
+	local clear_shot = nearest_ball_distance_squared(player_ball) > AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED
+
+	-- With no other balls in the way, this CPU player is too good - it can win before another player has a chance
+	-- But it does much worse when other balls are involved
+	-- So add a bit of handicap when there are no other balls anywhere close
+	-- Also add this slop when way ahead of everyone
+	local slop = 0
+	if (clear_shot) slop += 1
+
+	local points_ahead = points_ahead_of_next()
+	if (points_ahead >= 3) slop += 1
+	if (points_ahead >= 6) slop += 2
+	if (points_ahead >= 10) slop += 2
+
+	--[[
+	First determine target point, without accounting for other balls
+
+	Target point might not be right under the wicket in some cases
+
+	- If we're at too steep of an angle, then aim slightly in front of wicket
+	- If there's another ball nearby and we don't have bonus shots yet, target it
+
+	TODO:
+	- See if we're lined up to score 2-3 wickets at once and go for that
+	- Figure out if there's a ball in the way of the wicket
+	]]
+
+	local target_distance_past = 0
+
+	local target_ahead_of_wicket_distance = -AI_TARGET_AHEAD_OF_WICKET_DISTANCE
+	if (next_wicket.reverse) target_ahead_of_wicket_distance = -target_ahead_of_wicket_distance
+
+	if (easy_shot and not wrong_side) or next_wicket.pole then
+		-- Easy shot, or targeting a pole; no point checking if we should aim in front
+		target_distance_past = AI_TARGET_PAST_WICKET_POLE_DISTANCE
+
+	elseif wrong_side and not too_steep then
+		-- Wrong side of wicket (by a lot, i.e. more than what would trigger too_steep), target even further in front
+		tx += 2 * target_ahead_of_wicket_distance
+
+	elseif too_steep or (player.bonus_shots and player.bonus_shots >= 2) or (d > 128) then
+		-- Play it safe
+		-- Too steep to hit wicket directly, or we have 2 bonus shots, or we're far away
+		-- Target slightly in front of wicket to set up for next shot
+		tx += target_ahead_of_wicket_distance
+
+	else
+		-- For medium-far shots, still might want to play it safe in certain conditions
+		local r = rnd()
+		if d > 64 and ((r >= 0.75) or (r >= 0.25 and slop >= 1)) then
+			tx += target_ahead_of_wicket_distance
+
+		else
+			-- Targeting wicket directly
+			-- Shift angle slightly away from center of wicket
+			ty += cpu_shift_y_away_from_center_of_wicket(dy)
+			target_distance_past = AI_TARGET_PAST_WICKET_POLE_DISTANCE
+		end
+	end
+
+	--
+	-- Now check if we want to target another ball
+	--
+
+	local targeting_ball = false
+
+	if not (easy_shot or player.bonus_shots) then
+		-- No bonus shots, so target another ball to get them
+		-- (nnless it's an easy shot, then it's not worth it)
+		-- TODO: sometimes this could still be worth it even with easy shots, just to move other ball
+
+		local bx, by = cpu_target_ball(player_ball, next_wicket, too_steep, wrong_side)
+
+		if bx then
+			-- TODO: don't necessarily target ball head-on - adjust angle a smidge toward next wicket
+			tx, ty = bx, by
+			target_distance_past = AI_TARGET_PAST_BALL_DISTANCE
+			targeting_ball = true
+		end
+	end
+
+	--
+	-- Target slightly past chosen point
+	--
+
+	tx_orig, ty_orig = tx, ty
+
+	if target_distance_past > 0 then
+		tx, ty = cpu_target_past(player_ball, tx, ty, target_distance_past)
+	end
+
+	--
+	-- Determine angle & power to hit target
+	--
+
+	local target_power, target_angle = cpu_determine_target_power_angle(player_ball, tx, ty, targeting_ball)
+
+	--
+	-- Add slop
+	--
+
+	if (targeting_ball and points_ahead <= 0) slop -= 1
+
+	slop = max(0, slop)
+
+	for i = 0,slop do
+		target_power, target_angle = cpu_add_error(target_power, target_angle)
+	end
+
+	target_angle = round(target_angle * 256) / 256
+	target_power = clip_num(target_power, SHOT_POWER_METER_RATE, 1.0)
+
+	player.cpu_target = {
+		angle=target_angle,
+		power=target_power,
+		-- Only power & angle are needed, the rest is for debugging
+		x=tx,
+		y=ty,
+		d=d,
+		x_orig=tx_orig,
+		y_orig=ty_orig,
+		slop=slop,
+		easy_shot=easy_shot,
+		wrong_side=wrong_side,
+		too_steep=too_steep,
+		clear_shot=clear_shot,
+		targeting_ball=targeting_ball,
+		points_ahead=points_ahead,
+	}
+end
+
+function cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
+
+	local easy_shot, wrong_side, too_steep = false, false, false
+
+	if next_wicket.pole then
+		easy_shot = d < 16
+
+	else
+		easy_shot = abs(dx) < 16 and abs(dy) < 4
+
+		if next_wicket.reverse then
+			wrong_side = dx > 0
+		else
+			wrong_side = dx < 0
+		end
+
+		if not easy_shot then
+			local target_angle_deg = ((360*atan2(dx, dy) + 180) % 360) - 180
+			too_steep = (90 - AI_TOO_STEEP_MARGIN) < abs(target_angle_deg) and abs(target_angle_deg) < (90 + AI_TOO_STEEP_MARGIN)
+		end
+	end
+
+	return easy_shot, wrong_side, too_steep
+end
+
+function cpu_target_past(player_ball, tx, ty, extra_distance)
+	local dx, dy = tx - player_ball.x, ty - player_ball.y
+	local d = distance(dx, dy)
+	tx += extra_distance * (dx / d)
+	ty += extra_distance * (dy / d)
+	return tx, ty
+end
+
+function cpu_shift_y_away_from_center_of_wicket(dy)
+
+	if dy > 16 then
+		return 2
+	elseif dy < -16 then
+		return -2
+	elseif dy > 4 then
+		return 1
+	elseif dy < -4 then
+		return -1
+	end
+
+	return 0
+end
+
+function nearest_ball_distance_squared(ball)
+	-- Note: balls more than 127 away in either dimension will be ignored
+	local d2 = 32767
+	for other_ball in all(balls) do
+		if other_ball != ball then
+			local dx, dy = abs(ball.x - other_ball.x), abs(ball.y - other_ball.y)
+			-- Protect against overflow
+			if dx <= 127 and dy <= 127 then
+				d2 = min(d2, dx*dx + dy*dy)
+			end
+		end
+	end
+	return d2
+end
+
+function points_ahead_of_next()
+	local score = players[player_idx].last_wicket_idx
+
+	local points_ahead = 32767
+
+	for i = 1,#players do
+		local p = players[i]
+		if i != player_idx and p.enabled then
+			local delta = score - p.last_wicket_idx
+			if (delta <= 0) return 0
+			points_ahead = min(points_ahead, delta)
+		end
+	end
+
+	-- In case of single-player game
+	if (points_ahead == 32767) points_ahead = 0
+
+	return points_ahead
+end
+
+function cpu_target_ball(player_ball, next_wicket, too_steep, wrong_side)
+
+	local tx, ty = next_wicket[1], next_wicket[2]
+	local dx, dy = tx - player_ball.x, ty - player_ball.y
+
+	-- Only target ball if the weighted distance is less than this
+	local best_score = AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE
+	if (not (too_steep or wrong_side)) best_score = min(best_score, 0.75*distance(dx, dy))
+
+	-- Figure out best ball to target for bonus shot
+	local bx, by
+	for b in all(balls) do
+		if b != player_ball then
+
+			-- TODO: check if there's a wicket/pole in the way (not simple!)
+
+			local d_self = distance(b.x - player_ball.x, b.y - player_ball.y)
+
+			local dx_target = b.x - tx
+			local d_target = distance(dx_target, b.y - ty)
+
+			local score = 0.75 * d_self + 0.25 * d_target
+
+			-- Penalize if other ball is on wrong side of target (unless we're also on wrong side)
+			if not (next_wicket.pole or wrong_side) then
+				if ((not next_wicket.reverse) and dx_target > 2) score *= 2
+				if (next_wicket.reverse and dx_target < -2) score *= 2
+			end
+
+			if score < best_score then
+				-- This is the best candidate so far
+				bx, by, best_score = b.x, b.y, score
+			end
+		end
+	end
+
+	return bx, by
+end
+
+function cpu_determine_target_power_angle(player_ball, tx, ty, targeting_ball)
+
+	dx, dy = tx - player_ball.x, ty - player_ball.y
+	local target_angle = atan2(dx, dy)
+
+	local d = distance(dx, dy)
+
+	local target_power = sqrt(d) / 14
+
+	-- If we're targeting a nearby ball, increase power
+	-- Note that "cpu_target_past" has already been handled
+	if (targeting_ball and d < 16) target_power *= 2
+
+	target_power = clip_num(target_power, SHOT_POWER_METER_RATE, 1-SHOT_POWER_METER_RATE)
+
+	return target_power, target_angle
+end
+
+function cpu_add_error(target_power, target_angle)
+
+	local angle_err
+
+	local r = rnd()
+	if r > 0.9 then
+		angle_err = 2*ANGLE_STEP
+	elseif r > 0.75 then
+		angle_err = ANGLE_STEP
+	elseif r > 0.25 then
+		angle_err = 0
+	elseif r > 0.1 then
+		angle_err = -ANGLE_STEP
+	else
+		angle_err = -2*ANGLE_STEP
+	end
+	target_angle = (target_angle + angle_err) % 1.0
+
+	target_power += (rnd() - 0.5) / 32
+
+	return target_power, target_angle
 end
 
 --
@@ -633,7 +1003,12 @@ function next_shot_same_player()
 	shot_power = 0
 	shot_angle = 0
 	shot_power_change = 0
-	if (WICKETS[players[player_idx].last_wicket_idx + 1].reverse) shot_angle = 0.5
+
+	local player = players[player_idx]
+
+	player.cpu_target = nil
+
+	if (WICKETS[player.last_wicket_idx + 1].reverse) shot_angle = 0.5
 end
 
 function next_player()
@@ -641,6 +1016,8 @@ function next_player()
 	local player = players[player_idx]
 	player.shots = 0
 	if (player.bonus_shots) player.bonus_shots = 0
+
+	player.cpu_target = nil
 
 	local n_iter = 0
 	while true do
@@ -654,6 +1031,8 @@ function next_player()
 		assert(n_iter <= #players)
 	end
 
+	if (not player.ball) reset_ball(player)
+
 	next_shot_same_player()
 
 	assert(player.enabled)
@@ -661,8 +1040,6 @@ function next_player()
 	assert((not player.bonus_shots) or (player.bonus_shots == 0), 'player.bonus_shots='..(player.bonus_shots or 'nil'))
 	player.shots = 1
 	if (player.bonus_shots) player.bonus_shots = 0
-
-	if (not player.ball) reset_ball(player)
 
 	camera_x = player.ball.x
 	camera_y = player.ball.y
@@ -734,6 +1111,8 @@ function _init()
 		add(players, {
 			ball=nil,
 			enabled=idx <= 4,
+			cpu=idx % 2 == 0,
+			cpu_target=nil,
 			palette=palette,
 			color_main=palette[8],
 			color_light=palette[14],
@@ -807,13 +1186,9 @@ end
 
 function _update60()
 
-	if not game_started then
-		update_title_screen()
-		return
-	end
-
 	local player = players[player_idx]
 	local player_ball, op, x = player.ball, btnp(4), btn(5)
+	local left, right, up, down = btn(0), btn(1), btn(2), btn(3)
 
 	if DEBUG then
 		while stat(30) do
@@ -822,13 +1197,14 @@ function _update60()
 			if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
 			if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
 			if (key == '=') debug_pause_physics = not debug_pause_physics
-			if (key == '7') player.bonus_shots = nil
-			if (key == '8') player.bonus_shots = 0
-			if (key == '9') player.bonus_shots = 1
-			if (key == '0') player.bonus_shots = 2
-			if (key == ']') next_player()
 
-			if moving_cooldown <= 0 then
+			if game_started and moving_cooldown <= 0 then
+
+				if (key == '7') player.bonus_shots = nil
+				if (key == '8') player.bonus_shots = 0
+				if (key == '9') player.bonus_shots = 1
+				if (key == '0') player.bonus_shots = 2
+				if (key == ']') next_player()
 
 				local moved = false
 
@@ -846,7 +1222,39 @@ function _update60()
 					moved = true
 				end
 
-				if (moved) resolve_all_static_collisions_for_ball(player_ball)
+				if moved then
+					resolve_all_static_collisions_for_ball(player_ball)
+					if (player.cpu) set_cpu_target()
+				end
+			end
+		end
+	end
+
+	if not game_started then
+		update_title_screen()
+		return
+	end
+
+	if player.cpu then
+		-- CPU logic
+
+		op, x, left, right, up, down = false, false, false, false, false, false
+
+		if moving_cooldown <= 0 and not debug_pause_physics then		
+
+			if (not player.cpu_target) set_cpu_target()
+
+			if shot_power_change == 0 then
+				local angle_err = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
+				if angle_err >= ANGLE_STEP then
+					right = true
+				elseif angle_err <= -ANGLE_STEP then
+					left = true
+				else
+					op = true  -- Start shot
+				end
+			elseif shot_power >= min(1, player.cpu_target.power) then
+				op = true  -- Finish shot
 			end
 		end
 	end
@@ -964,16 +1372,16 @@ function _update60()
 
 	else
 		if x then
-			if (btn(0)) camera_x -= 4  -- left
-			if (btn(1)) camera_x += 4  -- right
-			if (btn(2)) camera_y -= 4  -- up
-			if (btn(3)) camera_y += 4  -- down
+			if (left)  camera_x -= 4
+			if (right) camera_x += 4
+			if (up)    camera_y -= 4
+			if (down)  camera_y += 4
 		else
 			camera_x = player.ball.x
 			camera_y = player.ball.y
 			if shot_power_change == 0 then
-				if (btn(0)) shot_angle += 1/256  -- left
-				if (btn(1)) shot_angle -= 1/256  -- right
+				if (left)  shot_angle += ANGLE_STEP
+				if (right) shot_angle -= ANGLE_STEP
 			end
 		end
 
@@ -1008,18 +1416,19 @@ function draw_shot()
 
 	local w, l, d = 1.5, 10, 4 + 5*shot_power
 
+	-- Determine corners
 	local c = {
 		{ w*dy - d*dx,     -w*dx - d*dy},
 		{ w*dy - (d+l)*dx, -w*dx - (d+l)*dy},
 		{-w*dy - (d+l)*dx,  w*dx - (d+l)*dy},
 		{-w*dy - d*dx,      w*dx - d*dy},
 	}
-
 	for i=1,4 do
 		c[i][1] = round(x + c[i][1])
 		c[i][2] = round(y + c[i][2])
 	end
 
+	-- Fill
 	for i=0,3 do
 		line_round(
 			lerp(c[1][1], c[4][1], i/4), lerp(c[1][2], c[4][2], i/4),
@@ -1031,14 +1440,17 @@ function draw_shot()
 			c[4][1], c[4][2],
 			4)
 	end
+
+	-- Ends
 	line(c[1][1], c[1][2], c[4][1], c[4][2], 5)
 	line(c[2][1], c[2][2], c[3][1], c[3][2], 5)
 
+	-- Stripes in player color
 	for i in all({1, 4}) do
-	line_round(
-		lerp(c[1][1], c[2][1], i/5), lerp(c[1][2], c[2][2], i/5),
-		lerp(c[4][1], c[3][1], i/5), lerp(c[4][2], c[3][2], i/5),
-		player.color_main)
+		line_round(
+			lerp(c[1][1], c[2][1], i/5), lerp(c[1][2], c[2][2], i/5),
+			lerp(c[4][1], c[3][1], i/5), lerp(c[4][2], c[3][2], i/5),
+			player.color_main)
 	end
 end
 
@@ -1182,7 +1594,7 @@ function _draw()
 		if (next_wicket.reverse) x += 11
 		y += 1
 	elseif next_wicket.reverse then
-		x -= 1
+		x -= 2
 	end
 	spr(3, x, y, 1, 1, next_wicket.reverse)
 
@@ -1235,10 +1647,32 @@ function _draw()
 	for s in all(sprites) do
 		if (s.pal) pal(s.pal)
 		spr(s.idx, round(s.x), round(s.y), s.w or 1, s.h or 1)
+		if (s.pal) reset_palette()
 	end
-	reset_palette()
+
+	if DEBUG and player.cpu_target then
+		line(
+			player.cpu_target.x_orig - 2, player.cpu_target.y_orig,
+			player.cpu_target.x_orig + 2, player.cpu_target.y_orig,
+			9)
+		line(
+			player.cpu_target.x_orig, player.cpu_target.y_orig - 2,
+			player.cpu_target.x_orig, player.cpu_target.y_orig + 2,
+			9)
+
+		line(
+			player.cpu_target.x - 2, player.cpu_target.y,
+			player.cpu_target.x + 2, player.cpu_target.y,
+			14)
+		line(
+			player.cpu_target.x, player.cpu_target.y - 2,
+			player.cpu_target.x, player.cpu_target.y + 2,
+			14)
+	end
 
 	if debug_draw_primitives then
+
+		-- Velocity
 		for ball in all(balls) do
 			line_round(
 				ball.x,
@@ -1248,6 +1682,7 @@ function _draw()
 				11)
 		end
 
+		-- Current collisions
 		for ball in all(balls) do
 			for coll in all(ball.collisions) do
 
@@ -1264,6 +1699,7 @@ function _draw()
 			end
 		end
 
+		-- Wicket collision points
 		for w in all(WICKET_COLLISION_POINTS) do
 			local col = 9
 			if (w.pole) col = 8
@@ -1309,6 +1745,24 @@ function _draw()
 		end
 
 		if (last_dv2) print('dv2=' .. last_dv2)
+
+		if player.cpu_target then
+			print('')
+			print('tx=' .. player.cpu_target.x)
+			print('ty=' .. player.cpu_target.y)
+			print('td=' .. player.cpu_target.d)
+			print('tp=' .. player.cpu_target.power)
+			print('ta=' .. (player.cpu_target.angle * 360))
+
+			if (player.cpu_target.easy_shot) print('easy_shot')
+			if (player.cpu_target.wrong_side) print('wrong_side')
+			if (player.cpu_target.too_steep) print('too_steep')
+			if (player.cpu_target.clear_shot) print('clear_shot')
+			if (player.cpu_target.targeting_ball) print('targeting_ball')
+
+			print('pts=' .. player.cpu_target.points_ahead)
+			print('slop=' .. player.cpu_target.slop)
+		end
 	end
 
 	--
