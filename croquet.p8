@@ -24,6 +24,8 @@ SHOT_POWER_ERR_OVER = 15/360
 
 ANGLE_STEP = 1/256
 
+SQRT_MAX = sqrt(32767) - 0.001
+
 --
 -- Field dimensions & wicket locations
 --
@@ -202,6 +204,23 @@ function distance(dx, dy)
 	if (d < 0) d = 32767
 
 	return d
+end
+
+function distance_squared(dx, dy)
+	-- Calculate distance squared, overflow-safe
+	-- On overflow, returns nil
+	dx = abs(dx)
+	dy = abs(dy)
+
+	if (dx >= SQRT_MAX or dy >= SQRT_MAX) return nil
+
+	local dx2, dy2 = dx*dx, dy*dy
+	local d2 = dx2 + dy2
+	if (d2 < dx2 or d2 < dy2) return nil
+
+	assert(d2 >= 0)
+
+	return d2
 end
 
 function sort_z(items)
@@ -715,7 +734,7 @@ function set_cpu_target()
 
 	TODO:
 	- See if we're lined up to score 2-3 wickets at once and go for that
-	- Figure out if there's a ball in the way of the wicket
+	- Figure out if there's a ball in the way of the target
 	]]
 
 	local target_distance_past = 0
@@ -732,6 +751,8 @@ function set_cpu_target()
 		tx += 2 * target_ahead_of_wicket_distance
 
 	elseif too_steep or (player.bonus_shots and player.bonus_shots >= 2) or (d > 128) then
+		-- TODO: also factor in angle to wicket, and if player.shots > 1
+
 		-- Play it safe
 		-- Too steep to hit wicket directly, or we have 2 bonus shots, or we're far away
 		-- Target slightly in front of wicket to set up for next shot
@@ -771,6 +792,8 @@ function set_cpu_target()
 			targeting_ball = true
 		end
 	end
+
+	-- TODO: if at this point there's a ball between here and the target, target that ball instead
 
 	--
 	-- Target slightly past chosen point
@@ -905,6 +928,46 @@ function points_ahead_of_next()
 	return points_ahead
 end
 
+function wicket_between(x1, y1, x2, y2)
+
+	local line_dx, line_dy = x2 - x1, y2 - y1
+
+	local d2 = distance_squared(line_dx, line_dy)
+
+	-- In case of overflow, just return that it's not between (as well as when distance 0)
+	if ((not d2) or d2 == 0) return false
+
+	for wicket in all(WICKET_COLLISION_POINTS) do
+		-- Hidden wickets would be redundant
+		-- TODO: instead, maintain separate list of hidden wickets and just iterate that
+		if not wicket.hidden then
+
+			-- Determine distance from point (wicket.x, wicket.y) to line segment [(x1, y1), (x2, y2)]
+
+			local wicket_dx = wicket.x - x1
+			local wicket_dy = wicket.y - y1
+
+			-- Project point onto the line
+
+			-- First, determine interpolation parameter t: 0 = at (x1, y1), 1 = at (y2, y2)
+			local dot = wicket_dx * line_dx + wicket_dy * line_dy
+			local t = dot / d2
+
+			-- If t is not in range [0, 1], then point on this line is not within the segment
+			if 0 < t and t < 1 then
+				local proj_x = lerp(x1, x2, t)
+				local proj_y = lerp(y1, y2, t)
+
+				local wicket_distance = distance(wicket.x - proj_x, wicket.y - proj_y)
+
+				if (wicket_distance < 4) return true
+			end
+		end
+	end
+
+	return false
+end
+
 function cpu_target_ball(player_ball, next_wicket, too_steep, wrong_side)
 
 	local tx, ty = next_wicket[1], next_wicket[2]
@@ -917,7 +980,7 @@ function cpu_target_ball(player_ball, next_wicket, too_steep, wrong_side)
 	-- Figure out best ball to target for bonus shot
 	local bx, by
 	for b in all(balls) do
-		if b != player_ball then
+		if b != player_ball and not wicket_between(player_ball.x, player_ball.y, b.x, b.y) then
 
 			-- TODO: check if there's a wicket/pole in the way (not simple!)
 

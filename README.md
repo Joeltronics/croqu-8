@@ -32,7 +32,13 @@ Fix 1-pixel gaps when drawing club
 
 Possibly some performance or token count optimizations (although so far, neither seems necessary)
 
+AI improvements:
+
+- Check for other balls in the way of the chosen target and figure out how to handle this
+- Try for multiple wickets at once when this is possible
+- Maybe add difficulty options?
+
 "Maybe later" features:
 
 - Teams (pairs) mode
-- Optional "Garden croquet" layout & rules (the current is "lawn croquet")
+- Optional "Garden Croquet" layout & rules (the current is "Lawn Croquet")
