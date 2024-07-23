@@ -492,6 +492,22 @@ function resolve_all_static_collisions()
 	assert(false, "resolve_all_static_collisions hit iteration limit")
 end
 
+function any_collisions_for_ball(ball)
+	for w in all(WICKET_COLLISION_POINTS) do
+		local dx, dy = ball.x - w.x, ball.y - w.y
+		local d2 = distance_squared(dx, dy)
+		if (d2 and d2 <= BALL_POLE_D2) return true
+	end
+	for b in all(balls) do
+		if b != ball then
+			local dx, dy = ball.x - b.x, ball.y - b.y
+			local d2 = distance_squared(dx, dy)
+			if (d2 and d2 <= BALL_D2) return true
+		end
+	end
+	return false
+end
+
 function resolve_all_static_collisions_for_ball(ball)
 
 	local x_orig, y_orig, stuck_counter = ball.x, ball.y, 0
@@ -602,6 +618,8 @@ function update_title_screen()
 
 		game_started = true
 	end
+
+	cpu_update = stat(1)
 end
 
 function draw_title_screen()
@@ -1128,9 +1146,14 @@ end
 function reset_ball(player)
 	local palette = player.palette
 
-	player.ball = {
-		x=WICKETS[1][1] + 4,
-		y=WICKETS[1][2] + 5,
+	player.selected_starting_point = false
+
+	local y = WICKETS[1][2] + 4
+	if (player.cpu) y = WICKETS[1][2] - 4
+
+	local ball = {
+		x=WICKETS[1][1],
+		y=y,
 		vx=0,
 		vy=0,
 		color=palette[8],
@@ -1138,13 +1161,17 @@ function reset_ball(player)
 		last_wicket_idx=1,
 		collisions={},
 	}
+	player.ball = ball
 
 	balls = {}
 	for p in all(players) do
 		if (p.ball) add(balls, p.ball)
 	end
 
-	resolve_all_static_collisions_for_ball(player.ball)
+	local dy = 1
+	while any_collisions_for_ball(ball) do
+		ball.y += dy
+	end
 end
 
 function add_wicket_collision_points(idx, wicket)
@@ -1172,17 +1199,18 @@ function _init()
 	for idx = 1,#PALETTES do
 		local palette = PALETTES[idx]
 		add(players, {
-			ball=nil,
-			enabled=idx <= 4,
-			cpu=idx % 2 == 0,
-			cpu_target=nil,
+			enabled=idx <= 4, -- Default to 4 players
+			cpu=idx % 2 == 0, -- Default to 2 CPU players (alternating)
 			palette=palette,
 			color_main=palette[8],
 			color_light=palette[14],
 			color_dark=palette[2],
+			ball=nil,
+			selected_starting_point=false,
 			last_wicket_idx=1,
 			shots=0,
 			bonus_shots=nil,
+			cpu_target=nil,
 		})
 	end
 
@@ -1267,7 +1295,12 @@ function _update60()
 				if (key == '8') player.bonus_shots = 0
 				if (key == '9') player.bonus_shots = 1
 				if (key == '0') player.bonus_shots = 2
-				if (key == ']') next_player()
+
+				if key == ']' then
+					next_player()
+					player = players[player_idx]
+					player_ball = player.ball
+				end
 
 				local moved = false
 
@@ -1295,160 +1328,165 @@ function _update60()
 
 	if not game_started then
 		update_title_screen()
-		return
-	end
 
-	if player.cpu then
-		-- CPU logic
-
-		op, x, left, right, up, down = false, false, false, false, false, false
-
-		if moving_cooldown <= 0 and not debug_pause_physics then		
-
-			if (not player.cpu_target) set_cpu_target()
-
-			if shot_power_change == 0 then
-				local angle_err = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
-				if angle_err >= ANGLE_STEP then
-					right = true
-				elseif angle_err <= -ANGLE_STEP then
-					left = true
-				else
-					op = true  -- Start shot
-				end
-			elseif shot_power >= min(1, player.cpu_target.power) then
-				op = true  -- Finish shot
-			end
-		end
-	end
-
-	if moving_cooldown <= 0 then
-
-		if op then
-			if shot_power_change > 0 then
-				-- Shot power meter rising
-				launch_ball()
-				shot_power_change = 0
-			elseif shot_power_change < 0 then
-				-- Shot power meter falling
-				launch_ball()
-				shot_power_change = 0
-			else
-				-- Shot power = 0, start shot power meter
-				shot_power_change = SHOT_POWER_METER_RATE
-			end
-
-			if shot_power_change == 0 then
-				-- Re-enable key repeat
-				poke(0x5f5c, 0)
-				poke(0x5f5d, 0)
-			else
-				-- Disable key repeat
-				poke(0x5f5c, 255)
-				poke(0x5f5d, 255)
-			end
-		end
-
-		shot_power += shot_power_change
-
-		if shot_power >= 1 then
-			shot_power_change = SHOT_POWER_METER_FALL_RATE
-			shot_power_over = true
-		elseif shot_power <= 0 then
-			shot_power_change = 0
-			shot_power_over = false
-		end
-
-		shot_power = clip_num(shot_power, 0, 1)
-	end
-
-	for ball in all(balls) do
-		ball.collisions = {}
-	end
-
-	if moving_cooldown > 0 then
-
-		if (not debug_pause_physics) or op then
-
-			-- Process physics
-
-			moving_cooldown -= 1
-
-			-- TODO optimization: keep a list of moving players, only iterate those
-			-- TODO optimization: when looping through each ball, make a list of close players & wickets
-			-- (with simpler check, e.g. abs(dx)+abs(dy)), then these are the only ones that get checked for collisions
-
-			for ball in all(balls) do
-				ball.x_prev = ball.x
-				ball.y_prev = ball.y
-			end
-
-			for idx=1,COLLISION_CHECK_DIVISIONS do
-				for ball in all(balls) do
-					if ball.vx != 0 or ball.vy != 0 then
-						ball.x += ball.vx / COLLISION_CHECK_DIVISIONS
-						ball.y += ball.vy / COLLISION_CHECK_DIVISIONS
-					end
-				end
-				if (collisions()) moving_cooldown = MOVING_COOLDOWN_FRAMES
-			end
-
-			for ball in all(balls) do
-				if ball.vx != 0 or ball.vy != 0 then
-
-					local drag = DRAG
-					if (ball.x < ROUGH or ball.y < ROUGH or ball.x >= WIDTH-ROUGH or ball.y >= HEIGHT-ROUGH) drag = DRAG_ROUGH
-
-					ball.vx *= drag
-					ball.vy *= drag
-
-					local v2 = ball.vx*ball.vx + ball.vy*ball.vy
-					if (v2 <= V2_STOP_THRESH) then
-						-- Stop ball
-
-						-- Move ball slightly when it stops
-						-- TODO: Add ball spin, and make this depend on it
-						ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-						ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-						ball.vx, ball.vy = 0, 0
-					end
-					moving_cooldown = MOVING_COOLDOWN_FRAMES
-				end
-			end
-		end
-
-		for player in all(players) do
-			check_wickets(player)
-		end
-
-		-- TODO: If player's ball isn't moving but another is, make camera follow that one instead
-		camera_x = player_ball.x
-		camera_y = player_ball.y
-
-		if moving_cooldown <= 0 then
-			if (player.shots + (player.bonus_shots or 0)) <= 0 then
-				next_player()
-			else
-				next_shot_same_player()
-			end
-		end
+	elseif not player.selected_starting_point then
+		update_select_starting_point()
 
 	else
-		if x then
-			if (left)  camera_x -= 4
-			if (right) camera_x += 4
-			if (up)    camera_y -= 4
-			if (down)  camera_y += 4
-		else
-			camera_x = player.ball.x
-			camera_y = player.ball.y
-			if shot_power_change == 0 then
-				if (left)  shot_angle += ANGLE_STEP
-				if (right) shot_angle -= ANGLE_STEP
+		-- TODO: refactor into function
+
+		if player.cpu then
+			-- CPU logic
+
+			op, x, left, right, up, down = false, false, false, false, false, false
+
+			if moving_cooldown <= 0 and not debug_pause_physics then		
+
+				if (not player.cpu_target) set_cpu_target()
+
+				if shot_power_change == 0 then
+					local angle_err = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
+					if angle_err >= ANGLE_STEP then
+						right = true
+					elseif angle_err <= -ANGLE_STEP then
+						left = true
+					else
+						op = true  -- Start shot
+					end
+				elseif shot_power >= min(1, player.cpu_target.power) then
+					op = true  -- Finish shot
+				end
 			end
 		end
 
-		shot_angle = round((shot_angle * 256) % 256) / 256
+		if moving_cooldown <= 0 then
+
+			if op then
+				if shot_power_change > 0 then
+					-- Shot power meter rising
+					launch_ball()
+					shot_power_change = 0
+				elseif shot_power_change < 0 then
+					-- Shot power meter falling
+					launch_ball()
+					shot_power_change = 0
+				else
+					-- Shot power = 0, start shot power meter
+					shot_power_change = SHOT_POWER_METER_RATE
+				end
+
+				if shot_power_change == 0 then
+					-- Re-enable key repeat
+					poke(0x5f5c, 0)
+					poke(0x5f5d, 0)
+				else
+					-- Disable key repeat
+					poke(0x5f5c, 255)
+					poke(0x5f5d, 255)
+				end
+			end
+
+			shot_power += shot_power_change
+
+			if shot_power >= 1 then
+				shot_power_change = SHOT_POWER_METER_FALL_RATE
+				shot_power_over = true
+			elseif shot_power <= 0 then
+				shot_power_change = 0
+				shot_power_over = false
+			end
+
+			shot_power = clip_num(shot_power, 0, 1)
+		end
+
+		for ball in all(balls) do
+			ball.collisions = {}
+		end
+
+		if moving_cooldown > 0 then
+
+			if (not debug_pause_physics) or op then
+
+				-- Process physics
+
+				moving_cooldown -= 1
+
+				-- TODO optimization: keep a list of moving players, only iterate those
+				-- TODO optimization: when looping through each ball, make a list of close players & wickets
+				-- (with simpler check, e.g. abs(dx)+abs(dy)), then these are the only ones that get checked for collisions
+
+				for ball in all(balls) do
+					ball.x_prev = ball.x
+					ball.y_prev = ball.y
+				end
+
+				for idx=1,COLLISION_CHECK_DIVISIONS do
+					for ball in all(balls) do
+						if ball.vx != 0 or ball.vy != 0 then
+							ball.x += ball.vx / COLLISION_CHECK_DIVISIONS
+							ball.y += ball.vy / COLLISION_CHECK_DIVISIONS
+						end
+					end
+					if (collisions()) moving_cooldown = MOVING_COOLDOWN_FRAMES
+				end
+
+				for ball in all(balls) do
+					if ball.vx != 0 or ball.vy != 0 then
+
+						local drag = DRAG
+						if (ball.x < ROUGH or ball.y < ROUGH or ball.x >= WIDTH-ROUGH or ball.y >= HEIGHT-ROUGH) drag = DRAG_ROUGH
+
+						ball.vx *= drag
+						ball.vy *= drag
+
+						local v2 = ball.vx*ball.vx + ball.vy*ball.vy
+						if (v2 <= V2_STOP_THRESH) then
+							-- Stop ball
+
+							-- Move ball slightly when it stops
+							-- TODO: Add ball spin, and make this depend on it
+							ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+							ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+							ball.vx, ball.vy = 0, 0
+						end
+						moving_cooldown = MOVING_COOLDOWN_FRAMES
+					end
+				end
+			end
+
+			for player in all(players) do
+				check_wickets(player)
+			end
+
+			-- TODO: If player's ball isn't moving but another is, make camera follow that one instead
+			camera_x = player_ball.x
+			camera_y = player_ball.y
+
+			if moving_cooldown <= 0 then
+				if (player.shots + (player.bonus_shots or 0)) <= 0 then
+					next_player()
+				else
+					next_shot_same_player()
+				end
+			end
+
+		else
+			if x then
+				if (left)  camera_x -= 4
+				if (right) camera_x += 4
+				if (up)    camera_y -= 4
+				if (down)  camera_y += 4
+			else
+				camera_x = player.ball.x
+				camera_y = player.ball.y
+				if shot_power_change == 0 then
+					if (left)  shot_angle += ANGLE_STEP
+					if (right) shot_angle -= ANGLE_STEP
+				end
+			end
+
+			shot_angle = round((shot_angle * 256) % 256) / 256
+		end
 	end
 
 	moving_cooldown = max(moving_cooldown, 0)
@@ -1456,6 +1494,46 @@ function _update60()
 	camera_y = clip_num(camera_y, 64, HEIGHT-64)
 
 	cpu_update = stat(1)
+end
+
+function update_select_starting_point()
+	local player = players[player_idx]
+	local player_ball = player.ball, btnp(4)
+	local left, right, up, down
+
+	assert(player_ball)
+
+	if player.cpu then
+		player.selected_starting_point = true
+		camera_x, camera_y = player_ball.x, player_ball.y
+
+	elseif btn(5) then
+		-- X
+		-- TODO: consolidate this with the logic in _update60()
+		local left, right, up, down = btn(0), btn(1), btn(2), btn(3)
+		if (left)  camera_x -= 4
+		if (right) camera_x += 4
+		if (up)    camera_y -= 4
+		if (down)  camera_y += 4
+	else
+		local up, down, o = btnp(2), btnp(3), btnp(4)
+
+		local dy = 0
+		if (up)    dy -= 1
+		if (down)  dy += 1
+
+		if dy != 0 then
+			player_ball.y += dy
+			while any_collisions_for_ball(player_ball) do
+				player_ball.y += dy
+			end
+		end
+
+		-- O
+		if (o) player.selected_starting_point = true
+
+		camera_x, camera_y = player_ball.x, player_ball.y
+	end
 end
 
 function draw_shot()
@@ -1594,6 +1672,7 @@ function _draw()
 	end
 
 	local player, sprites, x, y = players[player_idx], {}
+	local player_ball = players[player_idx].ball
 	local next_wicket = WICKETS[player.last_wicket_idx + 1]
 
 	camera(round(camera_x - 64), round(camera_y - 64))
@@ -1661,7 +1740,17 @@ function _draw()
 	end
 	spr(3, x, y, 1, 1, next_wicket.reverse)
 
-	if (moving_cooldown <= 0) draw_shot()
+	--
+	-- Starting point area
+	--
+
+	if not player.selected_starting_point then
+		local x, y = player_ball.x - 3, player_ball.y - 3
+		spr(5, x, y - 12)
+		spr(5, x, y + 12, 1, 1, false, true)
+	elseif moving_cooldown <= 0 then
+		draw_shot()
+	end
 
 	--
 	-- Balls & wickets - stuff where Z-order matters
@@ -1796,7 +1885,6 @@ function _draw()
 		-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
 		print(round(cpu * 100))
 
-		local player_ball = players[player_idx].ball
 		print('x=' .. player_ball.x)
 		print('y=' .. player_ball.y)
 		if (moving_cooldown <= 0) then
@@ -1836,14 +1924,14 @@ function _draw()
 end
 
 __gfx__
-00000000333333333333333333333333000000000000000000000000000000003333333333333333333333333333333333333333333333333333333333333333
-0000000033e8833333333333333338330000000000000000000000000000000033e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
-000000003e7e88333333333333333883000000000000000000000000000000003e8788333e8878333e8888333e7888333e8788333e8878333e8888333e788833
-0000000038e888333355553388888888000000000000000000000000000000003887883338878833367776333887883338878833388788333677763338878833
-00000000388882333555555333333883000000000000000000000000000000003887823338788233388882333888723338878233387882333888823338887233
-00000000338223333555555333333833000000000000000000000000000000003386233333822333338223333382233333862333338223333382233333822333
-00000000333333333355553333333333000000000000000000000000000000003333333333333333333333333333333333333333333333333333333333333333
-00000000333333333333333333333333000000000000000000000000000000003333333333333333333333333333333333333333333333333333333333333333
+00000000333333333333333333333333333333333333333300000000000000003333333333333333333333333333333333333333333333333333333333333333
+0000000033e8833333333333333338333333033333303333000000000000000033e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
+000000003e7e88333333333333333883333300333300033300000000000000003e8788333e8878333e8888333e7888333e8788333e8878333e8888333e788833
+0000000038e888333355553388888888300000033000003300000000000000003887883338878833367776333887883338878833388788333677763338878833
+00000000388882333555555333333883333300333330333300000000000000003887823338788233388882333888723338878233387882333888823338887233
+00000000338223333555555333333833333303333330333300000000000000003386233333822333338223333382233333862333338223333382233333822333
+00000000333333333355553333333333333333333330333300000000000000003333333333333333333333333333333333333333333333333333333333333333
+00000000333333333333333333333333333333333333333300000000000000003333333333333333333333333333333333333333333333333333333333333333
 00000000333333333333333333333333000000000000000000000000f33333333333333333333333333333333333333333333333333333333333333333333333
 000000003333333333373333333733330000000000000000000000008333333333e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
 00000000333333333367333333373333000000000000000000000000033333333e7888333e8776333e777833367788333e8878333e8886333e88883336888833
