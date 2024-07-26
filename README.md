@@ -22,8 +22,6 @@ If the power meter hits the top (goes red) then the shot will be less accurate
 
 ## TODO
 
-Choose where to start ball
-
 End-game logic
 
 More sound effects
@@ -34,7 +32,6 @@ Possibly some performance or token count optimizations (although so far, neither
 
 AI improvements:
 
-- Check for other balls in the way of the chosen target and figure out how to handle this
 - Try for multiple wickets at once when this is possible
 - Maybe add difficulty options?
 
