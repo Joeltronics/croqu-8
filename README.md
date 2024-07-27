@@ -22,8 +22,6 @@ If the power meter hits the top (goes red) then the shot will be less accurate
 
 ## TODO
 
-End-game logic
-
 More sound effects
 
 Fix 1-pixel gaps when drawing club

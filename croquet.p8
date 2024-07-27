@@ -130,8 +130,10 @@ SHOT_POWER_COLORS = {1, 12, 11, 10, 9}
 --
 
 num_players = 6
+num_players_finished = 0
 
 game_started = false
+game_finished = false
 
 players = {}
 balls = {}
@@ -314,6 +316,8 @@ function ball_collisions()
 
 	local any_collisions, current_player = false, players[player_idx]
 
+	if (current_player.finish_position) return false
+
 	for idx1 = 1, #balls do
 		local b1 = balls[idx1]
 		for idx2 = idx1+1, #balls do
@@ -459,6 +463,8 @@ function wicket_collisions()
 
 					if w.pole and w.idx == player.last_wicket_idx + 1 then
 						score_wicket(player)
+						-- This could have triggered end of game
+						if (player.finish_position) return
 					end
 				end
 			end
@@ -611,11 +617,7 @@ function update_title_screen()
 	cpu_update = stat(1)
 end
 
-function draw_title_screen()
-	camera()
-
-	-- Background
-
+function draw_title_screen_bg()
 	rectfill(0, 0, 127, 31, 12)
 	fillp(0b0101101001011010)
 	rectfill(0, 32, 127, 127, 0xD3)
@@ -641,6 +643,11 @@ function draw_title_screen()
 			end
 		end
 	end
+end
+
+function draw_title_screen()
+	camera()
+	draw_title_screen_bg()
 
 	-- Text besides players
 
@@ -701,6 +708,77 @@ function draw_title_screen()
 	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
 
 	pal(DISPLAY_PALETTE, 1)
+end
+
+function draw_game_finished()
+	camera()
+
+	poke(0x5f5f,0x10)
+	pal(DISPLAY_PALETTE, 1)
+	memset(0x5f70, 0xff, 4)
+
+	draw_title_screen_bg()
+
+	-- Make sky a sunset instead
+	local p1 = 0b0010100001011010
+	local p2 = 0b0101101001111111
+
+	fillp(p1)
+	rectfill(0, 0, 127, 3, 0xC1)
+	fillp(p2)
+	rectfill(0, 4, 127, 7, 0xC1)
+	fillp(p1)
+	rectfill(0, 8, 127, 11, 0xFC)
+	fillp(p2)
+	rectfill(0, 12, 127, 15, 0xFC)
+	fillp(p1)
+	rectfill(0, 16, 127, 19, 0xEF)
+	fillp(p2)
+	rectfill(0, 20, 127, 23, 0xEF)
+	fillp(p1)
+	rectfill(0, 24, 127, 27, 0x9E)
+	fillp(p2)
+	rectfill(0, 28, 127, 31, 0x9E)
+	fillp()
+
+	for p in all(players) do
+		if (p.enabled) assert(p.finish_position)
+	end
+
+	local y = 40
+	print_centered('turns', 88, y, 7)
+	print_centered('shots', 112, y, 7)
+	y += 8
+	for i = 1,num_players do
+
+		local player = nil
+		for p in all(players) do
+			if p.finish_position == i then
+				player = p
+				break
+			end
+		end
+		assert(player)
+
+		if i <= 3 then
+			spr(48 + i, 38, y - 1)
+		else
+			print(i, 40, y, 7)
+		end
+
+		if player.cpu then
+			print_centered('cpu', 64, y, player.color_main)
+		else
+			print_centered('player', 64, y, player.color_main)
+		end
+
+		print_centered(player.total_turns, 88, y, 7)
+		print_centered(player.total_shots, 112, y, 7)
+
+		y += 8
+	end
+
+	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
 end
 
 --
@@ -1268,15 +1346,19 @@ function next_player()
 		player_idx += 1
 		player = players[player_idx]
 
-		if (player.enabled) break
+		if (player.enabled and not player.finish_position) break
 
 		n_iter += 1
 		assert(n_iter <= #players)
 	end
 
+	assert(not player.finish_position)
+
 	if (not player.ball) reset_ball(player)
 
 	next_shot_same_player()
+
+	player.total_turns += 1
 
 	assert(player.enabled)
 	assert(player.shots == 0, 'player.shots='..player.shots)
@@ -1293,10 +1375,28 @@ function current_player_ball_collision()
 	p.bonus_shots = p.bonus_shots or 2
 end
 
+function player_finish_game(player)
+	num_players_finished += 1
+	player.finish_position = num_players_finished
+	player.ball = nil
+	player.shots = 0
+	player.bonus_shots = nil
+	balls = {}
+	for p in all(players) do
+		if (p.ball) add(balls, p.ball)
+	end
+
+	-- TODO: auto finish when only 1 player still playing
+	if num_players_finished >= num_players then
+		game_finished = true
+	end
+end
+
 function score_wicket(player)
-	if player.last_wicket_idx == #WICKETS then
+	if player.last_wicket_idx >= #WICKETS - 1 then
+		player.last_wicket_idx += 1
 		play_sound_end_game()
-		-- TODO: finish game
+		player_finish_game(player)
 	else
 		play_sound_score_wicket()
 		player.last_wicket_idx += 1
@@ -1307,6 +1407,8 @@ end
 
 function reset_ball(player)
 	local palette = player.palette
+
+	assert(not player.finish_position)
 
 	player.selected_starting_point = false
 
@@ -1372,7 +1474,10 @@ function _init()
 			last_wicket_idx=1,
 			shots=0,
 			bonus_shots=nil,
+			total_shots=0,
+			total_turns=0,
 			cpu_target=nil,
+			finish_position=nil,
 		})
 	end
 
@@ -1385,8 +1490,11 @@ function check_wickets(player)
 	-- Note: only checks wickets, not poles
 	-- (Poles are handled through collision physics)
 
-	local w, ball = WICKETS[player.last_wicket_idx + 1], player.ball
-	if (w.pole or not ball) return
+	local ball, w = player.ball, WICKETS[player.last_wicket_idx + 1]
+	if ((not w) or w.pole or not ball) return
+
+	assert(not player.finish_position)
+
 	local x, y, xp, yp, wx, wy = ball.x, ball.y, ball.x_prev, ball.y_prev, w[1], w[2]
 
 	local through = false
@@ -1403,6 +1511,7 @@ function check_wickets(player)
 		end
 	end
 	if (through) score_wicket(player)
+	assert(not player.finish_position) -- should only finish on a pole
 end
 
 function launch_ball()
@@ -1434,10 +1543,14 @@ function launch_ball()
 		player.shots -= 1
 	end
 
+	player.total_shots += 1
+
 	play_sound_launch()
 end
 
 function _update60()
+
+	if (game_finished) return
 
 	local player = players[player_idx]
 	local player_ball, op, x = player.ball, btnp(4), btn(5)
@@ -1620,16 +1733,22 @@ function _update60()
 				check_wickets(player)
 			end
 
-			-- TODO: If player's ball isn't moving but another is, make camera follow that one instead
-			camera_x = player_ball.x
-			camera_y = player_ball.y
-
 			if moving_cooldown <= 0 then
-				if (player.shots + (player.bonus_shots or 0)) <= 0 then
+				if player.finish_position then
+					next_player()
+				elseif (player.shots + (player.bonus_shots or 0)) <= 0 then
 					next_player()
 				else
 					next_shot_same_player()
 				end
+			end
+
+			-- In case player changed due to next_player()
+			player_ball = players[player_idx].ball
+			if player_ball then
+				-- TODO: If player's ball isn't moving but another is, make camera follow that one instead?
+				camera_x = player_ball.x
+				camera_y = player_ball.y
 			end
 
 		else
@@ -1781,10 +1900,17 @@ function draw_status_bar()
 
 		if (p.enabled) print_centered(p.last_wicket_idx - 1, 5, y1+1, textcol)
 
-		if idx == player_idx then
+		local x = STATUS_BAR_WIDTH + 4
 
-			local x = STATUS_BAR_WIDTH + 4
+		if p.finish_position then
+			if p.finish_position <= 3 then
+				spr(48 + p.finish_position, x - 2, y1)
+			else
+				circfill(x + 1, y1 + 3, 3, 0)
+				print(p.finish_position, x, y1 + 1, 7)
+			end
 
+		elseif idx == player_idx then
 			pal(p.ball.palette)
 			for i = 1,p.shots do
 				spr(1, x-3, y1)
@@ -1828,7 +1954,10 @@ function _draw()
 
 	reset_palette()
 
-	if not game_started then
+	if game_finished then
+		draw_game_finished()
+		return
+	elseif not game_started then
 		draw_title_screen()
 		return
 	end
@@ -1892,15 +2021,16 @@ function _draw()
 
 	-- Draw arrow on next wicket
 
-	x, y = next_wicket[1], next_wicket[2] - 3
-	if next_wicket.pole then
-		x -= 9
-		if (next_wicket.reverse) x += 11
-		y += 1
-	elseif next_wicket.reverse then
-		x -= 2
+	if next_wicket then
+		x, y = next_wicket[1], next_wicket[2] - 3
+		if next_wicket.pole then
+			x -= 9
+			if (next_wicket.reverse) x += 11
+		elseif next_wicket.reverse then
+			x -= 2
+		end
+		spr(3, x, y, 1, 1, next_wicket.reverse)
 	end
-	spr(3, x, y, 1, 1, next_wicket.reverse)
 
 	--
 	-- Starting point area
@@ -2047,36 +2177,39 @@ function _draw()
 		-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
 		print(round(cpu * 100))
 
-		print('x=' .. player_ball.x)
-		print('y=' .. player_ball.y)
-		if (moving_cooldown <= 0) then
-			print('p=' .. shot_power)
-			print('a=' .. shot_angle*256)
-		else
-			print('vx=' .. player_ball.vx)
-			print('vy=' .. player_ball.vy)
-		end
+		if not player.finish_position then
 
-		if (last_dv2) print('dv2=' .. last_dv2)
+			print('x=' .. player_ball.x)
+			print('y=' .. player_ball.y)
+			if (moving_cooldown <= 0) then
+				print('p=' .. shot_power)
+				print('a=' .. shot_angle*256)
+			else
+				print('vx=' .. player_ball.vx)
+				print('vy=' .. player_ball.vy)
+			end
 
-		if player.cpu_target then
-			print('')
-			print('tx=' .. player.cpu_target.x)
-			print('ty=' .. player.cpu_target.y)
-			print('td=' .. player.cpu_target.d)
-			print('tp=' .. player.cpu_target.power)
-			print('ta=' .. (player.cpu_target.angle * 360))
-			print('deg=' .. player.cpu_target.target_angle_deg)
-			print('saf=' .. (player.cpu_target.play_safe_chance or 'nil'))
+			if (last_dv2) print('dv2=' .. last_dv2)
 
-			if (player.cpu_target.easy_shot) print('easy_shot')
-			if (player.cpu_target.target_blocked) print('target_blocked')
-			if (player.cpu_target.wrong_side) print('wrong_side')
-			if (player.cpu_target.clear_shot) print('clear_shot')
-			if (player.cpu_target.targeting_ball) print('targeting_ball')
+			if player.cpu_target then
+				print('')
+				print('tx=' .. player.cpu_target.x)
+				print('ty=' .. player.cpu_target.y)
+				print('td=' .. player.cpu_target.d)
+				print('tp=' .. player.cpu_target.power)
+				print('ta=' .. (player.cpu_target.angle * 360))
+				print('deg=' .. player.cpu_target.target_angle_deg)
+				print('saf=' .. (player.cpu_target.play_safe_chance or 'nil'))
 
-			print('gap=' .. player.cpu_target.lead_point_gap)
-			print('slop=' .. player.cpu_target.slop)
+				if (player.cpu_target.easy_shot) print('easy_shot')
+				if (player.cpu_target.target_blocked) print('target_blocked')
+				if (player.cpu_target.wrong_side) print('wrong_side')
+				if (player.cpu_target.clear_shot) print('clear_shot')
+				if (player.cpu_target.targeting_ball) print('targeting_ball')
+
+				print('gap=' .. player.cpu_target.lead_point_gap)
+				print('slop=' .. player.cpu_target.slop)
+			end
 		end
 	end
 
@@ -2112,14 +2245,14 @@ __gfx__
 00000000e55555336333333300000000000000000000000000000000333333333382233333822333336523333365233333622333338223333382233333822333
 00000000333333333333333300000000000000000000000000000000333333333333333333333333333333333333333333333333333333333333333333333333
 00000000333333333333333300000000000000000000000000000000e55555533333333333333333333333333333333333333333333333333333333333333333
-0000000000000000000000000000000000000000000000000d030030000000003333333333333333333333333333333333333333333333333333333333333333
-0000000000000000000000000000000000000000000000003dd3d03d0000000033e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
-00000000000000000000000000000000000000000000000053d5d5dd500000003e8878333e8886333e888833368888333e7888333e8776333e77783336778833
-000000000000000000000000000000000000000000000000535535d3d00000003888783338887833368886333878883338788833387888333688863338887833
-0000000000000000000000000000000000000000000000003d5d3d33d00000003888723336778233387772333887723338788233368882333888823338888233
-0000000000000000000000000000000000000000000000005d3d5d35300000003386233333822333338223333382233333862333338223333382233333822333
-000000000000000000000000000000000000000000000000535353d5300000003333333333333333333333333333333333333333333333333333333333333333
-000000000000000000000000000000000000000000000000355333d3d00000003333333333333333333333333333333333333333333333333333333333333333
+000000003377a3333377633333aa933300000000000000000d030030000000003333333333333333333333333333333333333333333333333333333333333333
+0000000037a5aa33371166333a66693300000000000000003dd3d03d0000000033e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
+000000007a55aaa376661663a9996993000000000000000053d5d5dd500000003e8878333e8886333e888833368888333e7888333e8776333e77783336778833
+00000000aaa5aaa366611663999669930000000000000000535535d3d00000003888783338887833368886333878883338788833387888333688863338887833
+00000000aaa5aa93661666539999694300000000000000003d5d3d33d00000003888723336778233387772333887723338788233368882333888823338888233
+000000003a555933361115333966643300000000000000005d3d5d35300000003386233333822333338223333382233333862333338223333382233333822333
+0000000033a9933333655333339443330000000000000000535353d5300000003333333333333333333333333333333333333333333333333333333333333333
+000000003333333333333333333333330000000000000000355333d3d00000003333333333333333333333333333333333333333333333333333333333333333
 __sfx__
 910600001863500000036000060001600006000160001600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 490600002463500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
