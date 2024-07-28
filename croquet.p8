@@ -1768,12 +1768,21 @@ function _update60()
 						local v2 = ball.vx*ball.vx + ball.vy*ball.vy
 						if (v2 <= V2_STOP_THRESH) then
 							-- Stop ball
+							ball.vx, ball.vy = 0, 0
 
 							-- Move ball slightly when it stops
 							-- TODO: Add ball spin, and make this depend on it
-							ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-							ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-							ball.vx, ball.vy = 0, 0
+							if not any_collisions_for_ball(ball) then
+								local x1, y1 = ball.x, ball.y
+								ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+								ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+								local x2, y2 = ball.x, ball.y
+								resolve_all_static_collisions_for_ball(ball)
+								-- If static collisions caused significant movement, forget about the stop movement entirely
+								if distance_squared(ball.x - x2, ball.y - y1) > 1 then
+									ball.x, ball.y = x1, y1
+								end
+							end
 						end
 						moving_cooldown = MOVING_COOLDOWN_FRAMES
 					end
@@ -2240,6 +2249,7 @@ function _draw()
 
 			print('x=' .. player_ball.x)
 			print('y=' .. player_ball.y)
+			print('m=' .. moving_cooldown)
 			if (moving_cooldown <= 0) then
 				print('p=' .. shot_power)
 				print('a=' .. shot_angle*256)
