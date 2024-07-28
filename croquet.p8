@@ -92,7 +92,7 @@ AI_TARGET_PAST_WICKET_POLE_DISTANCE = 6
 AI_TARGET_PAST_BALL_DISTANCE = 8
 AI_TARGET_AHEAD_OF_WICKET_DISTANCE = 8
 AI_CLEAR_SHOT_MIN_BALL_DISTANCE = 64
-AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED = AI_CLEAR_SHOT_MIN_BALL_DISTANCE * AI_CLEAR_SHOT_MIN_BALL_DISTANCE
+AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED = AI_CLEAR_SHOT_MIN_BALL_DISTANCE
 AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE = 128
 AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE_EASY_SHOT = 24
 
@@ -154,7 +154,7 @@ shot_power_over = false
 
 moving_cooldown = 0
 
-last_dv2 = nil
+debug_last_dv = nil
 
 debug_pause_physics = false
 debug_no_draw_tops = false
@@ -217,10 +217,6 @@ function lerp_round(a, b, t)
 	return round(lerp(a, b, t))
 end
 
-function rlerp(val, a, b)
-	return (val - a) / (b - a)
-end
-
 function distance(dx, dy)
 	-- Calculate distance, overflow-safe
 	-- Exact distance when close, approximate distance when further
@@ -243,15 +239,14 @@ end
 
 function distance_squared(dx, dy)
 	-- Calculate distance squared, overflow-safe
-	-- On overflow, returns nil
-	dx = abs(dx)
-	dy = abs(dy)
+	-- On overflow, returns 32767
+	dx, dy = abs(dx), abs(dy)
 
-	if (dx >= SQRT_MAX or dy >= SQRT_MAX) return nil
+	if (dx >= SQRT_MAX or dy >= SQRT_MAX) return 32767
 
 	local dx2, dy2 = dx*dx, dy*dy
 	local d2 = dx2 + dy2
-	if (d2 < dx2 or d2 < dy2) return nil
+	if (d2 < dx2 or d2 < dy2) return 32767
 
 	assert(d2 >= 0)
 
@@ -297,47 +292,6 @@ function update_camera()
 end
 
 --
--- Sound
---
-
-function play_sound_launch()
-	sfx(clip_num(flr(shot_power * 4), 0, 3))
-	sfx(clip_num(7 + flr(shot_power * 4), 7, 10))
-end
-
-function play_sound_ball_collision(dv2)
-	last_dv2 = dv2
-	if dv2 > 0.5 then
-		sfx(10)
-	elseif dv2 > 0.1 then
-		sfx(9)
-	elseif dv2 > 0.05 then
-		sfx(8)
-	else
-		sfx(7)
-	end
-end
-
-function play_sound_wicket_collision(ball, is_pole)
-	-- local v2 = ball.vx*ball.vx + ball.vy*ball.vy
-
-	if is_pole then
-		sfx(4)
-		sfx(5)
-	else
-		sfx(6)
-	end
-end
-
-function play_sound_score_wicket()
-	-- TODO
-end
-
-function play_sound_end_game()
-	-- TODO
-end
-
---
 -- Physics
 --
 
@@ -349,9 +303,9 @@ function dotpart(vx, vy, nx, ny)
 	return vx, vy
 end
 
-function ball_overlap(dx, dy)
+function calc_overlap(dx, dy, sum_radius)
 	local d = distance(dx, dy)
-	local overlap = max(0, BALL_D + 0.25 - d) / d
+	local overlap = max(0, sum_radius + 0.25 - d) / d
 	return overlap, d
 end
 
@@ -376,7 +330,7 @@ function ball_collisions()
 				dy = b1.y - b2.y
 			end
 
-			local overlap, d = ball_overlap(dx, dy)
+			local overlap, d = calc_overlap(dx, dy, BALL_D)
 
 			if overlap > 0 then
 				any_collisions = true
@@ -391,7 +345,8 @@ function ball_collisions()
 				local coll1 = {x=b2.x, y=b2.y}
 				local coll2 = {x=b1.x, y=b1.y}
 
-				if (b1 == current_player.ball or b2 == current_player.ball) current_player_ball_collision()
+				-- If it's the current player, award bonus shots
+				if (b1 == current_player.ball or b2 == current_player.ball) current_player.bonus_shots = current_player.bonus_shots or 2
 
 				-- If no balls are moving, then we can skip this part entirely
 				if moving_cooldown > 0 then
@@ -409,9 +364,10 @@ function ball_collisions()
 					local dd1x, dd1y = dotpart(b1.vx, b1.vy, nx, ny)
 					local dd2x, dd2y = dotpart(b2.vx, b2.vy, nx, ny)
 
-					play_sound_ball_collision(
-						dd1x*dd1x + dd1y*dd1y + dd2x*dd2x + dd2y*dd2y
-					)
+					-- Play sound
+					local dv = sqrt(dd1x*dd1x + dd1y*dd1y + dd2x*dd2x + dd2y*dd2y)
+					sfx(min(round(4 * dv + 7), 10))
+					debug_last_dv = dv
 
 					b1.vx += -dd1x + dd2x
 					b1.vy += -dd1y + dd2y
@@ -428,21 +384,25 @@ function ball_collisions()
 	return any_collisions
 end
 
-function check_wicket_collision(ball, w, dx, dy, d2)
-	assert(d2 >= 0, 'd2=' .. d2)
+function check_wicket_collision(ball, w, dx, dy)
 
-	local d = sqrt(d2)
-	local push = max(0, BALL_POLE_D + 0.25 - d) / d
+	local overlap, d = calc_overlap(dx, dy, BALL_POLE_D)
 
-	if (push <= 0) return false
+	if (overlap <= 0) return false
 
 	local coll = {x=w.x, y=w.y}
 
-	ball.x += dx*push
-	ball.y += dy*push
+	ball.x += dx*overlap
+	ball.y += dy*overlap
 
 	if moving_cooldown > 0 then
-		play_sound_wicket_collision(ball, w.pole)
+		-- Play sound
+		if w.pole then
+			sfx(4)
+			sfx(5)
+		else
+			sfx(6)
+		end
 
 		local nx, ny = dx / d, dy / d
 		coll.nx, coll.ny = nx, ny
@@ -451,7 +411,6 @@ function check_wicket_collision(ball, w, dx, dy, d2)
 			-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
 			'dx=' .. dx ..
 			',dy=' .. dy ..
-			',d2=' .. d2 ..
 			',d=' .. d ..
 			',nx=' .. nx ..
 			',ny=' .. ny
@@ -496,13 +455,11 @@ function wicket_collisions()
 					dy = ball.y - w.y
 				end
 
-				if (abs(dx) + abs(dy) <= 127) d2 = dx*dx + dy*dy
+				d2 = distance_squared(dx, dy)
 
-				if d2 and d2 <= BALL_POLE_D2 then
-					assert(d2 >= 0, 'd2=' .. d2)
-
+				if d2 <= BALL_POLE_D2 then
 					if not w.hidden then
-						if (check_wicket_collision(ball, w, dx, dy, d2)) any_collisions = true
+						if (check_wicket_collision(ball, w, dx, dy)) any_collisions = true
 					end
 
 					if w.pole and w.idx == player.last_wicket_idx + 1 then
@@ -519,29 +476,18 @@ function wicket_collisions()
 end
 
 function collisions()
+	-- Returns true if any collisions occurred
 	local any_collisions = wicket_collisions()
-	any_collisions = ball_collisions() or any_collisions
-	return any_collisions
-end
-
-function resolve_all_static_collisions()
-	for i=1,100 do
-		if (not collisions()) return
-	end
-	assert(false, "resolve_all_static_collisions hit iteration limit")
+	return ball_collisions() or any_collisions
 end
 
 function any_collisions_for_ball(ball)
 	for w in all(WICKET_COLLISION_POINTS) do
-		local dx, dy = ball.x - w.x, ball.y - w.y
-		local d2 = distance_squared(dx, dy)
-		if (d2 and d2 <= BALL_POLE_D2) return true
+		if (distance_squared(ball.x - w.x, ball.y - w.y) <= BALL_POLE_D2) return true
 	end
 	for b in all(balls) do
 		if b != ball then
-			local dx, dy = ball.x - b.x, ball.y - b.y
-			local d2 = distance_squared(dx, dy)
-			if (d2 and d2 <= BALL_D2) return true
+			if (distance_squared(ball.x - b.x, ball.y - b.y) <= BALL_D2) return true
 		end
 	end
 	return false
@@ -569,7 +515,7 @@ function resolve_all_static_collisions_for_ball(ball)
 					dy = ball.y - b2.y
 				end
 
-				local overlap, d = ball_overlap(dx, dy)
+				local overlap, d = calc_overlap(dx, dy, BALL_D)
 
 				if overlap > 0 then
 					any_collisions = true
@@ -839,9 +785,9 @@ function cpu_get_target()
 
 	-- Determine a few flags that will be used later
 	local easy_shot, wrong_side, target_angle_deg = cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
-	local nearest_ball_d2 = nearest_ball_distance_squared(player_ball)
-	local clear_shot = nearest_ball_d2 > AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED
-	local target_blocked = wicket_between(player_ball, tx, ty, false)
+	local nearest_ball_d = nearest_ball_distance(player_ball)
+	local clear_shot = nearest_ball_d > AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED
+	local target_blocked = wicket_between(player_ball, tx, ty)
 
 	-- With no other balls in the way, this CPU player is too good - it can win before another player has a chance
 	-- But it does much worse when other balls are involved
@@ -851,10 +797,8 @@ function cpu_get_target()
 	if (clear_shot) slop += 1
 
 	local lead_point_gap = lead_point_gap()
-	if (lead_point_gap >= 3) slop += 1
-	if (lead_point_gap >= 5) slop += 1
-	if (lead_point_gap >= 7) slop += 1
-	if (lead_point_gap >= 9) slop += 1
+	-- 3-4: 1 / 5-6: 2 / 7-8: 3 / 9+: 4
+	if (lead_point_gap >= 3) slop += min(4, flr((lead_point_gap - 1) / 2))
 	if (lead_point_gap <= -2) slop -= 1
 	if (lead_point_gap <= -5) slop -= 1
 
@@ -889,62 +833,62 @@ function cpu_get_target()
 			play_safe_chance = 1
 
 		else
-			local angle_factor = max(0, rlerp(target_angle_deg, 30, 75))
-			local distance_factor = max(0, rlerp(d, 32, 192))
+			-- 30: 0
+			-- 75: 1
+			local angle_factor = max(0, target_angle_deg - 30) / 45
+
+			-- 32: 0
+			-- 192: 1
+			local distance_factor = max(0, d - 32) / 160
+
 			play_safe_chance = angle_factor + distance_factor
 
 			-- Slop factor - safer when shot will be less accurate
-			if slop >= 3 then
-				play_safe_chance *= 1.5
-			elseif slop >= 2 then
-				play_safe_chance *= 1.25
-			elseif slop >= 1 then
-				play_safe_chance *= 1.125
-			end
+			local slop_factors = { 1, 1.125, 1.25, 1.5 }
+			play_safe_chance *= slop_factors[clip_num(flr(slop) + 1, 1, 4)]
 
 			-- Extra (non bonus) shots factor
-			if player.shots >= 3 then
-				play_safe_chance *= 2
-			elseif player.shots >= 2 then
-				play_safe_chance *= 1.5
-			end
+			local shots_factors = {1, 1.5, 2}
+			play_safe_chance *= shots_factors[clip_num(player.shots, 1, 3)]
 
 			-- Factor in point gap - riskier when behind, safer when ahead
-			-- Note that this will also be reflected with slop_factor
-
-			if lead_point_gap >= 5 then
-				play_safe_chance *= 2
-			elseif lead_point_gap >= 3 then
-				play_safe_chance *= 1.5
-			elseif lead_point_gap >= -2 then
-				-- nothing
-			elseif lead_point_gap >= -5 then
-				play_safe_chance *= 0.75
-			elseif lead_point_gap >= -8 then
-				play_safe_chance *= 0.5
-			else
-				play_safe_chance = 0
+			if lead_point_gap >= 3 then
+				--[[
+				(+1: 1)
+				(+2: 1.25)
+				+3: 1.5
+				+4: 1.75
+				+5: 2.0
+				]]
+				play_safe_chance *= 0.75 + 0.25 * lead_point_gap
+			elseif lead_point_gap < -2 then
+				--[[
+				(-1: 1)
+				(-2: 7/8)
+				-3: 0.75
+				-4: 5/8
+				-5: 0.5
+				-6: 3/8
+				-7: 0.25
+				-8: 1/8
+				-9: 0
+				]]
+				play_safe_chance *= max(0, lead_point_gap + 9) / 8
 			end
 
 			-- If this is our last shot and there are other balls near the target,
 			-- play riskier since they might want to hit us
-			if player.shots + (player.bonus_shots or 0) <= 1 then
-				local target_nearest_ball_d2 = nearest_ball_distance_squared(player_ball, tx, ty)
-				if target_nearest_ball_d2 < 64 then -- d < 8
-					-- play_safe_chance -= 0.75
-					play_safe_chance *= 0.25
-				elseif target_nearest_ball_d2 < 256 then -- d < 16
-					-- play_safe_chance -= 0.5
-					play_safe_chance *= 0.5
-				elseif target_nearest_ball_d2 < 1024 then -- d < 32
-					-- play_safe_chance -= 0.25
-					play_safe_chance *= 0.75
-				elseif target_nearest_ball_d2 < 4096 then -- d < 64
-					-- play_safe_chance -= 0.125
-					play_safe_chance *= 7/8
-				end
+			local target_nearest_ball_d = nearest_ball_distance(player_ball, tx, ty)
+			if player.shots + (player.bonus_shots or 0) <= 1 and target_nearest_ball_d <= 64 then
+				--[[
+				1: 1 - 4/8 = 1 - 1/2 = 1/2
+				8: 1 - 4/8 = 1 - 1/2 = 1/2
+				16: 1 - 4/16 = 1 - 1/4 = 3/4
+				32: 1 - 4/32 = 1 - 1/8 = 7/8
+				64: 1 - 4/64 = 1 - 1/16 = 15/16
+				]]
+				play_safe_chance *= 1 - 4 / max(8, target_nearest_ball_d)
 			end
-
 		end
 
 		-- If play_safe_chance < 10% or > 90%, snap to 0 or 1
@@ -966,7 +910,7 @@ function cpu_get_target()
 				end
 
 				-- Update target_blocked for new target
-				target_blocked = wicket_between(player_ball, tx, ty, false)
+				target_blocked = wicket_between(player_ball, tx, ty)
 
 				-- If target isn't blocked, then we're fine with this position
 				if (not target_blocked) break
@@ -1039,7 +983,7 @@ function cpu_get_target()
 
 	if (target_ball and lead_point_gap <= 0) slop -= 1
 
-	target_power, target_angle = cpu_add_error(target_power, target_angle, slop)
+	target_power, target_angle = cpu_add_error(target_power, target_angle, max(slop, 0))
 
 	target_angle = round(target_angle * 256) / 256
 	target_power = clip_num(target_power, SHOT_POWER_METER_RATE, 1.0)
@@ -1125,16 +1069,15 @@ function cpu_shift_y_away_from_center_of_wicket(dy)
 	return 0
 end
 
-function nearest_ball_distance_squared(ball, x, y)
+function nearest_ball_distance(ball, x, y)
 	x, y = x or ball.x, y or ball.y
 	local d2 = 32767
 	for other_ball in all(balls) do
 		if other_ball != ball then
-			local other_ball_d2 = distance_squared(ball.x - other_ball.x, ball.y - other_ball.y)
-			if (other_ball_d2) d2 = min(d2, other_ball_d2)
+			d2 = min(d2, distance_squared(ball.x - other_ball.x, ball.y - other_ball.y))
 		end
 	end
-	return d2
+	return sqrt(d2)
 end
 
 function lead_point_gap()
@@ -1157,12 +1100,12 @@ function wicket_between(ball, tx, ty, target_is_ball, margin)
 
 	local line_dx, line_dy = x2 - x1, y2 - y1
 
-	local d2 = distance_squared(line_dx, line_dy) or 0
-
-	-- In case of overflow or distance 0, just return that it's not between
-	if (d2 <= 0) return false
+	local d2 = distance_squared(line_dx, line_dy)
+	assert(d2 >= 0)
 	local d = sqrt(d2)
-	if (d <= 0) return false
+
+	-- In case of distance 0, just return that it's not between
+	if (d == 0) return false
 
 	-- We don't want to use center of ball, but rather outer edges of ball
 	-- (e.g. in case our ball, or target ball, is straddling a wicket)
@@ -1187,19 +1130,14 @@ function wicket_between(ball, tx, ty, target_is_ball, margin)
 			-- Project point onto the line
 
 			-- First, determine interpolation parameter along line segment: t = 0 at (x1, y1), 1 at (y2, y2)
-			local dot = wicket_dx * line_dx + wicket_dy * line_dy
-			local t = dot / d2
+			local t = (wicket_dx * line_dx + wicket_dy * line_dy) / d2
 
 			-- If t is not in range [0, 1] (or slightly less - see above), then projected point is beyond ends of line segment
 			-- If it is, then project it onto line segment, and check distance from projected point
 			if t_min < t and t < t_max then
 				local proj_x = lerp(x1, x2, t)
 				local proj_y = lerp(y1, y2, t)
-
-				-- TODO optimization: only need to compare distance^2 for this
-				local wicket_distance = distance(wicket.x - proj_x, wicket.y - proj_y)
-
-				if (wicket_distance < BALL_POLE_D + (margin or 0)) return true
+				if (distance(wicket.x - proj_x, wicket.y - proj_y) < BALL_POLE_D + (margin or 0)) return true
 			end
 		end
 	end
@@ -1212,42 +1150,35 @@ function ball_between(ball, tx, ty, margin)
 	-- Largely copied from wicket_between(), but a few differences
 	-- TODO: try to consolidate these functions?
 
-	local x1, y1, x2, y2 = ball.x, ball.y, tx, ty
+	local bx, by = ball.x, ball.y
 
-	local line_dx, line_dy = x2 - x1, y2 - y1
-	local d2 = distance_squared(line_dx, line_dy) or 0
-	if (d2 <= 0) return false
-	local d = sqrt(d2)
-	if (d <= 0) return false
-
-	local t_min = BALL_R / d
+	local line_dx, line_dy = tx - bx, ty - by
+	local d2 = distance_squared(line_dx, line_dy)
+	assert(d2 >= 0)
+	if (d2 == 0) return false
 
 	-- Unlike wicket_between(), we leave t_max as 1 - if a ball is overlapping the target, then still want to target the ball
-	local t_max = 1
-	-- local t_max = 1 + t_min -- TODO: would this be better?
-
-	if (t_max <= 0 or t_min >= 1 or t_min >= t_max) return false
+	local t_min = BALL_R / sqrt(d2)
+	if (t_min >= 1) return false
 
 	local closest_ball = nil
-	local closest_ball_d2 = nil
+	local closest_ball_d2 = 32767
 
 	for other_ball in all(balls) do
 		if other_ball != ball then
-			local ball_dx = other_ball.x - ball.x
-			local ball_dy = other_ball.y - ball.y
+			local ball_dx = other_ball.x - bx
+			local ball_dy = other_ball.y - by
 
 			local t = (ball_dx * line_dx + ball_dy * line_dy) / d2
 
-			if t_min < t and t < t_max then
-				local proj_x = lerp(x1, x2, t)
-				local proj_y = lerp(y1, y2, t)
-				local ball_distance = distance(other_ball.x - proj_x, other_ball.y - proj_y)
+			if t_min < t and t < 1 then
+				local proj_x = lerp(bx, tx, t)
+				local proj_y = lerp(by, ty, t)
 
+				local ball_distance = distance(other_ball.x - proj_x, other_ball.y - proj_y)
 				if (ball_distance <= BALL_D + (margin or 0)) then
 					local other_ball_d2 = distance_squared(ball_dx, ball_dy)
-					if (not closest_ball_d2) or other_ball_d2 < closest_ball_d2 then
-						closest_ball, closest_ball_d2 = other_ball, other_ball_d2
-					end
+					if (other_ball_d2 < closest_ball_d2) closest_ball, closest_ball_d2 = other_ball, other_ball_d2
 				end
 			end
 		end
@@ -1314,39 +1245,26 @@ function cpu_determine_target_power_angle(player_ball, tx, ty, target_ball)
 	-- If we're targeting a nearby ball, increase power
 	-- Note that "cpu_target_past" has already been handled, so don't need to add extra for that
 	if target_ball then
-		if d < 16 then
-			target_power *= 2
-		elseif d < 32 then
-			target_power *= 1.5
-		end
+		if (d < 32) target_power *= 1.5
+		if (d < 16) target_power *= 1.333333333
 	end
 
-	target_power = clip_num(target_power, SHOT_POWER_METER_RATE, 1-SHOT_POWER_METER_RATE)
-
-	return target_power, target_angle
+	return clip_num(target_power, SHOT_POWER_METER_RATE, 1-SHOT_POWER_METER_RATE), target_angle
 end
 
 function cpu_add_error(target_power, target_angle, slop)
-	if slop > 0 then
 
-		local angle_err
-
-		local r = rnd()
-		if r > 0.9 then
-			angle_err = 2*ANGLE_STEP
-		elseif r > 0.75 then
-			angle_err = ANGLE_STEP
-		elseif r > 0.25 then
-			angle_err = 0
-		elseif r > 0.1 then
-			angle_err = -ANGLE_STEP
-		else
-			angle_err = -2*ANGLE_STEP
-		end
-		target_angle = (target_angle + slop * angle_err) % 1.0
-
-		target_power += slop * (rnd() - 0.5) / 32
+	-- TODO: multiply r by slop (might need to rebalance the other values too)
+	local r = rnd() - 0.5
+	local angle_err = ANGLE_STEP
+	if abs(r) > 0.4 then
+		angle_err *= 2
+	elseif abs(r) < 0.25 then
+		angle_err = 0
 	end
+	target_angle = (target_angle + slop * sgn(r) * angle_err) % 1.0
+
+	target_power += slop * (rnd() - 0.5) / 32
 
 	return target_power, target_angle
 end
@@ -1366,17 +1284,9 @@ end
 
 function next_shot_same_player()
 	reset_off_screen_balls()
-	shot_power = 0
-	shot_angle = 0
-	shot_power_change = 0
-
 	local player = players[player_idx]
-
-	player.cpu_target = nil
-
+	shot_power, shot_angle, shot_power_change, camera_look_ahead, player.cpu_target = 0, 0, 0, true, nil
 	if (WICKETS[player.last_wicket_idx + 1][1] < player.ball.x) shot_angle = 0.5
-
-	camera_look_ahead = true
 end
 
 function next_player()
@@ -1399,59 +1309,44 @@ function next_player()
 		assert(n_iter <= #players)
 	end
 
-	assert(not player.finish_position)
-
 	if (not player.ball) reset_ball(player)
 
 	next_shot_same_player()
 
-	player.total_turns += 1
-
-	assert(player.enabled)
 	assert(player.shots == 0, 'player.shots='..player.shots)
 	assert((not player.bonus_shots) or (player.bonus_shots == 0), 'player.bonus_shots='..(player.bonus_shots or 'nil'))
 	player.shots = 1
-	if (player.bonus_shots) player.bonus_shots = 0
+	player.total_turns += 1
 
 	update_camera()
 end
 
-function current_player_ball_collision()
-	local p = players[player_idx]
-	p.bonus_shots = p.bonus_shots or 2
-end
-
-function player_finish_game(player)
-	num_players_finished += 1
-	player.finish_position = num_players_finished
-	player.ball = nil
-	player.shots = 0
-	player.bonus_shots = nil
-	balls = {}
-	for p in all(players) do
-		if (p.ball) add(balls, p.ball)
-	end
-
-	-- TODO: auto finish when only 1 player still playing
-	if num_players_finished >= num_players then
-		game_finished = true
-	end
-end
-
 function score_wicket(player)
-	if player.last_wicket_idx >= #WICKETS - 1 then
-		player.last_wicket_idx += 1
-		play_sound_end_game()
-		player_finish_game(player)
-	else
-		play_sound_score_wicket()
-		player.last_wicket_idx += 1
-		if (player == players[player_idx]) player.shots += 1
-		player.bonus_shots = nil
-	end
+	player.last_wicket_idx += 1
 
 	-- At this point the camera must have caught up to the wicket, so stop looking ahead
 	camera_look_ahead = false
+
+	if player.last_wicket_idx < #WICKETS then
+		-- Not the last wicket
+		-- TODO: play a sound
+		if (player == players[player_idx]) player.shots += 1
+		player.bonus_shots = nil
+
+	else
+		-- Last wicket; finish the game for this player
+		-- TODO: play a sound
+		num_players_finished += 1
+		player.finish_position, player.shots, player.bonus_shots, player.ball = num_players_finished, 0, nil, nil
+		balls = {}
+		for p in all(players) do
+			if (p.ball) add(balls, p.ball)
+		end
+	
+		if num_players_finished >= num_players then
+			game_finished = true
+		end
+	end
 end
 
 function reset_ball(player)
@@ -1596,7 +1491,9 @@ function launch_ball()
 
 	player.total_shots += 1
 
-	play_sound_launch()
+	-- Play sound
+	sfx(clip_num(flr(shot_power * 4), 0, 3))
+	sfx(clip_num(7 + flr(shot_power * 4), 7, 10))
 end
 
 function _update60()
@@ -2258,7 +2155,7 @@ function _draw()
 				print('vy=' .. player_ball.vy)
 			end
 
-			if (last_dv2) print('dv2=' .. last_dv2)
+			if (debug_last_dv) print('dv2=' .. debug_last_dv)
 
 			if player.cpu_target then
 				print('')
