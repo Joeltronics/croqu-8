@@ -20,6 +20,7 @@ BALL_POLE_D2 = BALL_POLE_D*BALL_POLE_D
 MOVING_COOLDOWN_FRAMES = 60
 SHOT_POWER_METER_RATE = 1/64
 SHOT_POWER_METER_FALL_RATE = -1/32
+SHOT_POWER_ERR_MAX_POWER = 5/360
 SHOT_POWER_ERR_OVER = 15/360
 
 ANGLE_STEP = 1/256
@@ -143,6 +144,9 @@ player_idx = 1
 camera_x = 64
 camera_y = CY
 
+-- Camera will look ahead toward next wicket when this is set
+camera_look_ahead = true
+
 shot_angle = 0
 shot_power = 0
 shot_power_change = 0
@@ -160,6 +164,27 @@ debug_increase_shot_pointer_length = false
 --
 -- Utility functions
 --
+
+function pelogen_tri_low(l,t,c,m,r,b,col)
+	-- By shiftalow, with some slight changes (CC4-BY-NC-SA)
+	while t>m or m>b do
+		l,t,c,m=c,m,l,t
+		while m>b do
+			c,m,r,b=r,b,c,m
+		end
+	end
+	local e,j=l,(r-l)/(b-t)
+	while m do
+		local i=(c-l)/(m-t)
+		for t=flr(t),flr(m)-1 do
+			rectfill(l,t,e,t,col)
+			l+=i
+			e+=j
+		end
+		l,t,m,c,b=c,m,b,r
+	end
+	pset(r,t,col)
+end
 
 function reset_palette()
 	pal()
@@ -186,6 +211,10 @@ end
 function lerp(a, b, t)
 	-- return a + t * (b - a)
 	return (1 - t) * a + t * b
+end
+
+function lerp_round(a, b, t)
+	return round(lerp(a, b, t))
 end
 
 function rlerp(val, a, b)
@@ -250,6 +279,21 @@ function shot_power_color()
 	if (shot_power <= 0) return 0
 	if (shot_power_over) return 8
 	return SHOT_POWER_COLORS[clip_num(flr(shot_power * #SHOT_POWER_COLORS) + 1, 1, #SHOT_POWER_COLORS)]
+end
+
+function update_camera()
+	-- TODO: If player's ball isn't moving but another is, make camera follow that one instead?
+	local player = players[player_idx]
+	if (not player.ball) return
+
+	camera_x = player.ball.x
+	camera_y = player.ball.y
+
+	local next_wicket = WICKETS[player.last_wicket_idx + 1]
+	if camera_look_ahead and next_wicket then
+		camera_x = clip_num(lerp(camera_x, next_wicket[1], 0.5), camera_x - 32, camera_x + 32)
+		camera_y = clip_num(lerp(camera_y, next_wicket[2], 0.5), camera_y - 32, camera_y + 32)
+	end
 end
 
 --
@@ -785,7 +829,7 @@ end
 -- CPU AI logic
 --
 
-function set_cpu_target()
+function cpu_get_target()
 	local player = players[player_idx]
 	local player_ball, next_wicket = player.ball, WICKETS[player.last_wicket_idx + 1]
 
@@ -806,7 +850,7 @@ function set_cpu_target()
 	local slop = 0
 	if (clear_shot) slop += 1
 
-	local lead_point_gap = lead_point_gap_of_lead_or_next()
+	local lead_point_gap = lead_point_gap()
 	if (lead_point_gap >= 3) slop += 1
 	if (lead_point_gap >= 5) slop += 1
 	if (lead_point_gap >= 7) slop += 1
@@ -827,7 +871,7 @@ function set_cpu_target()
 	local target_distance_past, play_safe_chance = 0, nil
 
 	if (easy_shot and not wrong_side) or next_wicket.pole then
-		-- Easy shot, or targeting a pole; no point trying any of the other logic
+		-- Easy shot, or targeting a pole; no point trying any of the play-safe logic
 		target_distance_past = AI_TARGET_PAST_WICKET_POLE_DISTANCE
 
 	elseif target_angle_deg >= 120 then
@@ -955,7 +999,7 @@ function set_cpu_target()
 		target_ball = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
 
 		if target_ball then
-			tx, ty = adjust_target_for_ball(tx, ty, target_ball)
+			tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball)
 		end
 	end
 
@@ -968,7 +1012,7 @@ function set_cpu_target()
 	local target_ball_between = ball_between(player_ball, tx, ty, other_ball_margin)
 	if target_ball_between then
 		target_ball = target_ball_between
-		tx, ty = adjust_target_for_ball(tx, ty, target_ball)
+		tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball)
 	end
 
 	--
@@ -1000,7 +1044,7 @@ function set_cpu_target()
 	target_angle = round(target_angle * 256) / 256
 	target_power = clip_num(target_power, SHOT_POWER_METER_RATE, 1.0)
 
-	player.cpu_target = {
+	return {
 		angle=target_angle,
 		power=target_power,
 		-- Only power & angle are needed, the rest is for debugging
@@ -1021,7 +1065,7 @@ function set_cpu_target()
 	}
 end
 
-function adjust_target_for_ball(tx, ty, target_ball)
+function cpu_adjust_target_for_ball(tx, ty, target_ball)
 
 	-- Don't target ball head-on - adjust angle a smidge toward previous tx/ty
 
@@ -1093,7 +1137,7 @@ function nearest_ball_distance_squared(ball, x, y)
 	return d2
 end
 
-function lead_point_gap_of_lead_or_next()
+function lead_point_gap()
 
 	local max_other_player_wicket = 0
 
@@ -1218,7 +1262,8 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 	local d = distance(tx - player_ball.x, ty - player_ball.y)
 
 	-- Only target a ball if the weighted distance is less than this
-	local best_score = min(0.75*d, AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE)
+	local best_score = 0.75 * d
+	if (next_wicket.pole) best_score = 0.5 * d
 
 	if wrong_side or target_blocked then
 		-- In one of these cases, always go for closest ball (within a reasonable range)
@@ -1227,9 +1272,9 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 		-- May still want to target another ball just to move it - but only if it's not far out of the way
 		best_score = min(best_score, AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE_EASY_SHOT)
 	end
+	best_score = min(best_score, AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE)
 
 	-- Figure out best ball to target for bonus shot
-	-- local bx, by
 	local target_ball
 	for b in all(balls) do
 		if b != player_ball and not wicket_between(player_ball, b.x, b.y, true, 1.5) then
@@ -1329,7 +1374,9 @@ function next_shot_same_player()
 
 	player.cpu_target = nil
 
-	if (WICKETS[player.last_wicket_idx + 1].reverse) shot_angle = 0.5
+	if (WICKETS[player.last_wicket_idx + 1][1] < player.ball.x) shot_angle = 0.5
+
+	camera_look_ahead = true
 end
 
 function next_player()
@@ -1366,8 +1413,7 @@ function next_player()
 	player.shots = 1
 	if (player.bonus_shots) player.bonus_shots = 0
 
-	camera_x = player.ball.x
-	camera_y = player.ball.y
+	update_camera()
 end
 
 function current_player_ball_collision()
@@ -1403,6 +1449,9 @@ function score_wicket(player)
 		if (player == players[player_idx]) player.shots += 1
 		player.bonus_shots = nil
 	end
+
+	-- At this point the camera must have caught up to the wicket, so stop looking ahead
+	camera_look_ahead = false
 end
 
 function reset_ball(player)
@@ -1422,7 +1471,6 @@ function reset_ball(player)
 		vy=0,
 		color=palette[8],
 		palette=palette,
-		last_wicket_idx=1,
 		collisions={},
 	}
 	player.ball = ball
@@ -1464,7 +1512,7 @@ function _init()
 		local palette = PALETTES[idx]
 		add(players, {
 			enabled=idx <= 4, -- Default to 4 players
-			cpu=idx % 2 == 0, -- Default to 2 CPU players (alternating)
+			cpu=idx > 1, -- Default to 1 human player
 			palette=palette,
 			color_main=palette[8],
 			color_light=palette[14],
@@ -1516,17 +1564,20 @@ end
 
 function launch_ball()
 
+	local angle_rand = rnd() - 0.5
+	-- Range is [0.5, 0.5)
+	if (abs(angle_rand) < 0.25) angle_rand *= 2
+	-- Range is still [0.5, 0.5), but biased away from center
+
 	if shot_power_over then
-		-- Add error
-		local angle_rand = rnd() - 0.5
-		-- Range is [0.5, 0.5)
-		if (abs(angle_rand) < 0.25) angle_rand *= 2
-		-- Range is still [0.5, 0.5), but biased away from center
+		-- Add extra error
 		angle_rand *= 2 * SHOT_POWER_ERR_OVER
-		-- Range is [-SHOT_POWER_ERR_OVER, SHOT_POWER_ERR_OVER), biased away from center
-		shot_angle += angle_rand
+	else
+		-- Add a little bit of randomness to hard shots
+		angle_rand *= SHOT_POWER_ERR_MAX_POWER * max(0, 2 * (shot_power - 0.5))
 	end
 
+	shot_angle += angle_rand
 	shot_angle = round((shot_angle * 256) % 256) / 256
 
 	local player = players[player_idx]
@@ -1595,7 +1646,7 @@ function _update60()
 
 				if moved then
 					resolve_all_static_collisions_for_ball(player_ball)
-					if (player.cpu) set_cpu_target()
+					if (player.cpu) cpu_get_target()
 				end
 			end
 		end
@@ -1617,7 +1668,7 @@ function _update60()
 
 			if moving_cooldown <= 0 and not debug_pause_physics then		
 
-				if (not player.cpu_target) set_cpu_target()
+				if (not player.cpu_target) player.cpu_target = cpu_get_target()
 
 				if shot_power_change == 0 then
 					local angle_err = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
@@ -1742,14 +1793,9 @@ function _update60()
 					next_shot_same_player()
 				end
 			end
+			-- Note: player could have changed due to next_player(), so player_ball will be stale - but we're not using it again
 
-			-- In case player changed due to next_player()
-			player_ball = players[player_idx].ball
-			if player_ball then
-				-- TODO: If player's ball isn't moving but another is, make camera follow that one instead?
-				camera_x = player_ball.x
-				camera_y = player_ball.y
-			end
+			update_camera()
 
 		else
 			if x then
@@ -1758,8 +1804,7 @@ function _update60()
 				if (up)    camera_y -= 4
 				if (down)  camera_y += 4
 			else
-				camera_x = player.ball.x
-				camera_y = player.ball.y
+				update_camera()
 				if shot_power_change == 0 then
 					if (left)  shot_angle += ANGLE_STEP
 					if (right) shot_angle -= ANGLE_STEP
@@ -1808,12 +1853,14 @@ function update_select_starting_point()
 			while any_collisions_for_ball(player_ball) do
 				player_ball.y += dy
 			end
+			-- Don't allow moving it offscreen
+			reset_off_screen_balls()
 		end
 
 		-- O
 		if (o) player.selected_starting_point = true
 
-		camera_x, camera_y = player_ball.x, player_ball.y
+		update_camera()
 	end
 end
 
@@ -1830,12 +1877,15 @@ function draw_shot()
 	if (debug_increase_shot_pointer_length) l = 256
 
 	line_round(x, y, x + l*dx, y + l*dy, shot_power_color())
+end
 
-	-- Draw club
+function draw_club()
 
-	-- TODO: There can still sometimes be small gaps in this, figure out a better way to draw it
-	-- (Use a sprite rotation algo?)
-
+	local player = players[player_idx]
+	assert(player.ball)
+	local x, y = player.ball.x, player.ball.y
+	if (not x) return -- HACK: this shouldn't be needed
+	local dx, dy = cos(shot_angle), sin(shot_angle)
 	local w, l, d = 1.5, 10, 4 + 5*shot_power
 
 	-- Determine corners
@@ -1850,29 +1900,31 @@ function draw_shot()
 		c[i][2] = round(y + c[i][2])
 	end
 
-	-- Fill
-	for i=0,3 do
-		line_round(
-			lerp(c[1][1], c[4][1], i/4), lerp(c[1][2], c[4][2], i/4),
-			c[2][1], c[2][2],
-			4)
+	if (dy > 0) c = { c[3], c[4], c[1], c[2] }
 
-		line_round(
-			lerp(c[3][1], c[2][1], i/4), lerp(c[3][2], c[2][2], i/4),
-			c[4][1], c[4][2],
-			4)
-	end
+	-- Fill
+	pelogen_tri_low(c[1][1], c[1][2], c[2][1], c[2][2], c[3][1], c[3][2], 4)
+	pelogen_tri_low(c[3][1], c[3][2], c[4][1], c[4][2], c[1][1], c[1][2], 4)
+
+	-- Sides - (pelogen_tri_low seems to have different rounding behavior, so these aren't necessarily covered)
+	local col2 = 4
+	if (abs(dy) >= 0.25) col2 = 2
+	line(c[1][1], c[1][2], c[2][1], c[2][2], 4)
+	line(c[3][1], c[3][2], c[4][1], c[4][2], col2)
 
 	-- Ends
-	line(c[1][1], c[1][2], c[4][1], c[4][2], 5)
-	line(c[2][1], c[2][2], c[3][1], c[3][2], 5)
+	line_round(c[1][1], c[1][2], c[4][1], c[4][2], 5)
+	line_round(c[2][1], c[2][2], c[3][1], c[3][2], 5)
 
 	-- Stripes in player color
 	for i in all({1, 4}) do
-		line_round(
-			lerp(c[1][1], c[2][1], i/5), lerp(c[1][2], c[2][2], i/5),
-			lerp(c[4][1], c[3][1], i/5), lerp(c[4][2], c[3][2], i/5),
-			player.color_main)
+		local x1, y1 = lerp_round(c[1][1], c[2][1], i/5), lerp_round(c[1][2], c[2][2], i/5)
+		local x2, y2 = lerp_round(c[4][1], c[3][1], i/5), lerp_round(c[4][2], c[3][2], i/5)
+		line(x1, y1, x2, y2, player.color_main)
+		if abs(dy) >= 0.25 then
+			pset(x1, y1, player.color_light)
+			pset(x2, y2, player.color_dark)
+		end
 	end
 end
 
@@ -1913,7 +1965,7 @@ function draw_status_bar()
 		elseif idx == player_idx then
 			pal(p.ball.palette)
 			for i = 1,p.shots do
-				spr(1, x-3, y1)
+				spr(30, x-3, y1)
 				x += 6
 			end
 			reset_palette()
@@ -1922,7 +1974,7 @@ function draw_status_bar()
 				for i=1,2 do
 					if (i <= p.bonus_shots) then
 						pal(p.ball.palette)
-						spr(1, x-3, y1)
+						spr(7, x-3, y1)
 						reset_palette()
 						circ(x, y1 + 3, 2, textcol)
 					else
@@ -2055,6 +2107,7 @@ function _draw()
 			pset(x, y, 0)
 		else
 			local idx = 8 + (round(0.5 * x) % 8) + 16*(round(0.5 * y) % 4)
+			if (not player.selected_starting_point) idx = 30
 			-- idx = 1 -- DEBUG
 			add(sprites, {idx=idx, x=x - 3, y=y-3, z=y, pal=ball.palette})
 		end
@@ -2153,6 +2206,12 @@ function _draw()
 	end
 
 	--
+	-- Club
+	--
+
+	if (player.selected_starting_point and moving_cooldown <= 0) draw_club()
+
+	--
 	-- HUD
 	--
 
@@ -2221,14 +2280,14 @@ function _draw()
 end
 
 __gfx__
-00000000333333333333333333333333333333333333333300000000000000003333333333333333333333333333333333333333333333333333333333333333
-0000000033e8833333333333333338333333033333303333000000000000000033e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
-000000003e7e88333333333333333883333300333300033300000000000000003e8788333e8878333e8888333e7888333e8788333e8878333e8888333e788833
-0000000038e888333355553388888888300000033000003300000000000000003887883338878833367776333887883338878833388788333677763338878833
-00000000388882333555555333333883333300333330333300000000000000003887823338788233388882333888723338878233387882333888823338887233
-00000000338223333555555333333833333303333330333300000000000000003386233333822333338223333382233333862333338223333382233333822333
-00000000333333333355553333333333333333333330333300000000000000003333333333333333333333333333333333333333333333333333333333333333
-00000000333333333333333333333333333333333333333300000000000000003333333333333333333333333333333333333333333333333333333333333333
+00000000333333333333333333333333333333333333333300000000333333333333333333333333333333333333333333333333333333333333333333333333
+0000000033e8833333333333333338333333033333303333000000003300033333e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
+000000003e7e8833333333333333388333330033330003330000000030e880333e8788333e8878333e8888333e7888333e8788333e8878333e8888333e788833
+0000000038e888333355553388888888300000033000003300000000308870333887883338878833367776333887883338878833388788333677763338878833
+00000000388882333555555333333883333300333330333300000000307720333887823338788233388882333888723338878233387882333888823338887233
+00000000338223333555555333333833333303333330333300000000330003333386233333822333338223333382233333862333338223333382233333822333
+00000000333333333355553333333333333333333330333300000000333333333333333333333333333333333333333333333333333333333333333333333333
+00000000333333333333333333333333333333333333333300000000333333333333333333333333333333333333333333333333333333333333333333333333
 00000000333333333333333333333333000000000000000000000000f33333333333333333333333333333333333333333333333333333333333333333333333
 000000003333333333373333333733330000000000000000000000008333333333e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
 00000000333333333367333333373333000000000000000000000000033333333e7888333e8776333e777833367788333e8878333e8886333e88883336888833

@@ -2,7 +2,9 @@
 
 License: Creative Commons BY-NC-SA 4.0
 
-Includes some Physics code from pico pool by nusan, BBS cart #21797 (CC4-BY-NC-SA)
+Includes some code by others (all CC4-BY-NC-SA):
+* Some physics code from pico pool by nusan, BBS cart #21797
+* pelogen_tri_low() from Pelogen by shiftalow, https://www.lexaloffle.com/bbs/?pid=75530#p
 
 ## Controls
 
@@ -23,8 +25,6 @@ If the power meter hits the top (goes red) then the shot will be less accurate
 ## TODO
 
 More sound effects
-
-Fix 1-pixel gaps when drawing club
 
 Possibly some performance or token count optimizations (although so far, neither seems necessary)
 
