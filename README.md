@@ -30,7 +30,6 @@ Possibly some performance or token count optimizations (although so far, neither
 
 AI improvements:
 
-- Try for multiple wickets at once when this is possible
 - Maybe add difficulty options?
 
 "Maybe later" features:

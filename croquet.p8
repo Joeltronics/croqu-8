@@ -160,6 +160,7 @@ debug_pause_physics = false
 debug_no_draw_tops = false
 debug_draw_primitives = false
 debug_increase_shot_pointer_length = false
+debug_force_safe_rand = nil
 
 --
 -- Utility functions
@@ -796,11 +797,14 @@ function cpu_get_target()
 	local slop = 0
 	if (clear_shot) slop += 1
 
-	local lead_point_gap = lead_point_gap()
+	-- TODO: increase lead_point_gap when we have lots of extra shots
+	local lead_point_gap = calculate_lead_point_gap()
 	-- 3-4: 1 / 5-6: 2 / 7-8: 3 / 9+: 4
 	if (lead_point_gap >= 3) slop += min(4, flr((lead_point_gap - 1) / 2))
 	if (lead_point_gap <= -2) slop -= 1
 	if (lead_point_gap <= -5) slop -= 1
+
+	-- TODO: if we're the only player not to have finished, set slop to 0
 
 	--[[
 	First determine ideal target point, without accounting for other balls
@@ -808,9 +812,32 @@ function cpu_get_target()
 	Target point might not be right under the wicket in some cases - might want to aim slightly in front
 
 	TODO:
-	- See if we're lined up in a way that can score 2 wickets at once (or even 2 wickets + pole) and go for that
-	- See if we can hit a ball past the next wicket
+	- Also see if we can hit a ball that's beyond the next wicket
 	]]
+
+	-- First, see if we're lined up in a way that can score 2 wickets at once, if so use next wicket as target
+	-- TODO: also try for 2 wickets + pole in some cases
+	
+	-- easy_shot is probably redundant here
+	if (easy_shot or dy < 6 or target_angle_deg < 15) and not (wrong_side or next_wicket.pole) then
+
+		local next_wicket = WICKETS[player.last_wicket_idx + 2]
+		assert(next_wicket)
+
+		local tx_next, ty_next = next_wicket[1], next_wicket[2]
+
+		local distance_off_from_current_target = distance_to_line_segment(
+			tx, ty, player_ball.x, player_ball.y, tx_next, ty_next) or 32767
+
+		-- if distance_off_from_current_target < 3 and not wicket_between(player_ball, tx_next, ty_next, 1) then
+		if distance_off_from_current_target < 4 and not wicket_between(player_ball, tx_next, ty_next, 1) then
+			tx, ty = tx_next, ty_next
+			dx, dy = tx - player_ball.x, ty - player_ball.y
+			d = distance(dx, dy)
+			easy_shot = false
+			-- Note we intentionally don't reset any of the other flags, those should still refer to nearest
+		end
+	end
 
 	local target_distance_past, play_safe_chance = 0, nil
 
@@ -841,7 +868,7 @@ function cpu_get_target()
 			-- 192: 1
 			local distance_factor = max(0, d - 32) / 160
 
-			play_safe_chance = angle_factor + distance_factor
+			play_safe_chance = 2 * angle_factor * distance_factor
 
 			-- Slop factor - safer when shot will be less accurate
 			local slop_factors = { 1, 1.125, 1.25, 1.5 }
@@ -892,14 +919,12 @@ function cpu_get_target()
 		end
 
 		-- If play_safe_chance < 10% or > 90%, snap to 0 or 1
-		if (play_safe_chance > 0.9) or (play_safe_chance >= 0.1 and play_safe_chance >= rnd()) then
+		local r = debug_force_safe_rand or rnd()
+		if (play_safe_chance > 0.9) or (play_safe_chance >= 0.1 and play_safe_chance >= r) then
 
 			-- Target in front of wicket
 
-			-- TODO: This logic can sometimes be bad, like when we just barely made it through the last wicket,
-			-- it causes us to aim further in front of the next wicket, which is worse for the nearby wicket
-
-			for i = 1,3 do
+			for i = 1,6 do
 
 				local tx_was, target_blocked_was = tx, target_blocked
 
@@ -943,7 +968,7 @@ function cpu_get_target()
 		target_ball = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
 
 		if target_ball then
-			tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball)
+			tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 0.5)
 		end
 	end
 
@@ -956,7 +981,8 @@ function cpu_get_target()
 	local target_ball_between = ball_between(player_ball, tx, ty, other_ball_margin)
 	if target_ball_between then
 		target_ball = target_ball_between
-		tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball)
+		-- We want to move ball out of the way, so target further away from ball center than other case
+		tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 1)
 	end
 
 	--
@@ -1009,7 +1035,7 @@ function cpu_get_target()
 	}
 end
 
-function cpu_adjust_target_for_ball(tx, ty, target_ball)
+function cpu_adjust_target_for_ball(tx, ty, target_ball, r)
 
 	-- Don't target ball head-on - adjust angle a smidge toward previous tx/ty
 
@@ -1018,7 +1044,7 @@ function cpu_adjust_target_for_ball(tx, ty, target_ball)
 	local dx, dy = tx - target_ball.x, ty - target_ball.y
 	local d = distance(dx, dy)
 	if d then
-		local scale = 0.5 * BALL_R / d
+		local scale = r * BALL_R / d
 		tx_new += dx * scale
 		ty_new += dy * scale
 	end
@@ -1080,7 +1106,7 @@ function nearest_ball_distance(ball, x, y)
 	return sqrt(d2)
 end
 
-function lead_point_gap()
+function calculate_lead_point_gap()
 
 	local max_other_player_wicket = 0
 
@@ -1094,92 +1120,78 @@ function lead_point_gap()
 	return players[player_idx].last_wicket_idx - max_other_player_wicket
 end
 
-function wicket_between(ball, tx, ty, target_is_ball, margin)
-
-	local x1, y1, x2, y2 = ball.x, ball.y, tx, ty
+function distance_to_line_segment(
+		px, py,
+		x1, y1,
+		x2, y2,
+		d_min, d_max)
+	-- (px, py): point
+	-- (x1, x2) & (x2, y2): line segment ends
+	-- d_min & d_max: optional extra length to subtract from each end of line segment
 
 	local line_dx, line_dy = x2 - x1, y2 - y1
 
 	local d2 = distance_squared(line_dx, line_dy)
 	assert(d2 >= 0)
+	if (d2 == 0) return nil
 	local d = sqrt(d2)
 
-	-- In case of distance 0, just return that it's not between
-	if (d == 0) return false
+	local t_min, t_max = 0, 1
+	if (d_min) t_min = d_min / d
+	if (d_max) t_max = 1 - (d_max / d)
+	if (t_min >= t_max or t_max <= 0 or t_min >= 1) return nil
 
-	-- We don't want to use center of ball, but rather outer edges of ball
-	-- (e.g. in case our ball, or target ball, is straddling a wicket)
-	-- So instead of checking if t is in range [0, 1] below, use slightly smaller range
-	local t_min = BALL_R / d
+	local point_dx = px - x1
+	local point_dy = py - y1
 
-	local t_max = 1
-	if (target_is_ball) t_max = 1 - t_min
+	-- Project point onto the line
 
-	if (t_min >= t_max or t_max <= 0 or t_min >= 1) return false
+	-- First, determine interpolation parameter along line segment: t = 0 at (x1, y1), 1 at (y2, y2)
+	-- t = (dot product) / (line length ^ 2)
+	local t = (point_dx * line_dx + point_dy * line_dy) / d2
 
+	-- If t is not in range [t_min, t_max], then projected point is beyond ends of line segment
+	if (t <= t_min or t >= t_max) return nil
+
+	-- Project it onto line segment, and check distance from projected point
+	local proj_x = lerp(x1, x2, t)
+	local proj_y = lerp(y1, y2, t)
+	return distance(px - proj_x, py - proj_y)
+end
+
+
+function wicket_between(ball, tx, ty, target_is_ball, margin)
 	for wicket in all(WICKET_COLLISION_POINTS) do
 		-- Hidden wickets would be redundant
 		-- TODO optimization: instead, maintain separate list of non-hidden wickets and just iterate that
 		if not wicket.hidden then
-
-			-- Determine distance from point (wicket.x, wicket.y) to line segment [(x1, y1), (x2, y2)]
-
-			local wicket_dx = wicket.x - x1
-			local wicket_dy = wicket.y - y1
-
-			-- Project point onto the line
-
-			-- First, determine interpolation parameter along line segment: t = 0 at (x1, y1), 1 at (y2, y2)
-			local t = (wicket_dx * line_dx + wicket_dy * line_dy) / d2
-
-			-- If t is not in range [0, 1] (or slightly less - see above), then projected point is beyond ends of line segment
-			-- If it is, then project it onto line segment, and check distance from projected point
-			if t_min < t and t < t_max then
-				local proj_x = lerp(x1, x2, t)
-				local proj_y = lerp(y1, y2, t)
-				if (distance(wicket.x - proj_x, wicket.y - proj_y) < BALL_POLE_D + (margin or 0)) return true
-			end
+			local d_between = distance_to_line_segment(
+				wicket.x, wicket.y,
+				ball.x, ball.y,
+				tx, ty) or 32767
+			if (d_between < BALL_POLE_D + (margin or 0)) return true
 		end
 	end
-
 	return false
 end
 
 function ball_between(ball, tx, ty, margin)
-	-- Checks if there are any balls between ball & target. If so, returns the ball that is closest to ball
-	-- Largely copied from wicket_between(), but a few differences
-	-- TODO: try to consolidate these functions?
-
-	local bx, by = ball.x, ball.y
-
-	local line_dx, line_dy = tx - bx, ty - by
-	local d2 = distance_squared(line_dx, line_dy)
-	assert(d2 >= 0)
-	if (d2 == 0) return false
-
-	-- Unlike wicket_between(), we leave t_max as 1 - if a ball is overlapping the target, then still want to target the ball
-	local t_min = BALL_R / sqrt(d2)
-	if (t_min >= 1) return false
+	-- Checks if there are any balls between ball & target. If so, returns the ball (of these) that is closest to ball
 
 	local closest_ball = nil
 	local closest_ball_d2 = 32767
 
 	for other_ball in all(balls) do
 		if other_ball != ball then
-			local ball_dx = other_ball.x - bx
-			local ball_dy = other_ball.y - by
+			local d_between = distance_to_line_segment(
+				tx, ty,
+				ball.x, ball.y,
+				other_ball.x, other_ball.y,
+				BALL_R, nil) or 32767
 
-			local t = (ball_dx * line_dx + ball_dy * line_dy) / d2
-
-			if t_min < t and t < 1 then
-				local proj_x = lerp(bx, tx, t)
-				local proj_y = lerp(by, ty, t)
-
-				local ball_distance = distance(other_ball.x - proj_x, other_ball.y - proj_y)
-				if (ball_distance <= BALL_D + (margin or 0)) then
-					local other_ball_d2 = distance_squared(ball_dx, ball_dy)
-					if (other_ball_d2 < closest_ball_d2) closest_ball, closest_ball_d2 = other_ball, other_ball_d2
-				end
+			if (d_between < BALL_POLE_D + (margin or 0)) then
+				local other_ball_d2 = distance_squared(other_ball.x - ball.x, other_ball.y - ball.y)
+				if (other_ball_d2 < closest_ball_d2) closest_ball, closest_ball_d2 = other_ball, other_ball_d2
 			end
 		end
 	end
@@ -1519,6 +1531,27 @@ function _update60()
 				if (key == '9') player.bonus_shots = 1
 				if (key == '0') player.bonus_shots = 2
 
+				local update_cpu_target = false
+
+				if key == 'i' then
+					if debug_force_safe_rand == 0 then
+						debug_force_safe_rand = nil
+					else
+						debug_force_safe_rand = 0
+					end
+					update_cpu_target = true
+				end
+				if key == 'o' then
+					if debug_force_safe_rand == 1 then
+						debug_force_safe_rand = nil
+					else
+						debug_force_safe_rand = 1
+					end
+					update_cpu_target = true
+				end
+
+				if (key == '[') player.last_wicket_idx += 1
+
 				if key == ']' then
 					next_player()
 					player = players[player_idx]
@@ -1543,8 +1576,10 @@ function _update60()
 
 				if moved then
 					resolve_all_static_collisions_for_ball(player_ball)
-					if (player.cpu) cpu_get_target()
+					update_cpu_target = true
 				end
+
+				if (update_cpu_target and player.cpu) player.cpu_target = cpu_get_target()
 			end
 		end
 	end
@@ -2165,7 +2200,18 @@ function _draw()
 				print('tp=' .. player.cpu_target.power)
 				print('ta=' .. (player.cpu_target.angle * 360))
 				print('deg=' .. player.cpu_target.target_angle_deg)
-				print('saf=' .. (player.cpu_target.play_safe_chance or 'nil'))
+
+				if not player.cpu_target.play_safe_chance then
+					print('saf=nil')
+				elseif debug_force_safe_rand then
+					if debug_force_safe_rand >= 0.5 then
+						print('saf=false')
+					else
+						print('saf=true')
+					end
+				else
+					print('saf=' .. player.cpu_target.play_safe_chance)
+				end
 
 				if (player.cpu_target.easy_shot) print('easy_shot')
 				if (player.cpu_target.target_blocked) print('target_blocked')
