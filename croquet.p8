@@ -609,18 +609,18 @@ function update_title_screen()
 end
 
 function draw_title_screen_bg()
-	rectfill(0, 0, 127, 31, 12)
+	rectfill(0, 0, 127, 47, 12)
 	fillp(0b0101101001011010)
-	rectfill(0, 32, 127, 127, 0xD3)
+	rectfill(0, 48, 127, 127, 0xD3)
 	fillp()
 
-	for y=33,127 do
+	for y=49,127 do
 
-		local w = 0.5 * (y - 32)
+		local w = 0.5 * (y - 48)
 		local d = 1/w
 
 		local stripe = ((128 * d + 1.5) % 2) >= 1
-		if (y <= 48) stripe = (y % 2) < 1
+		if (y < 64) stripe = (y % 2) < 1
 
 		if stripe then
 			for idx=-TITLE_SCREEN_STRIPES,TITLE_SCREEN_STRIPES do
@@ -638,11 +638,21 @@ end
 
 function draw_title_screen()
 	camera()
+
+	-- Background
 	draw_title_screen_bg()
+
+	-- Header
+	-- palt(12, true)
+	-- rectfill(32, 8, 96, 39, 6)
+	-- rect(32, 8, 96, 39, 4)
+	sspr(0, 32, 128, 32, 0, 8)
+	-- palt(12, false)
+	-- print_centered('all star', 64, 19, 0)
 
 	-- Text besides players
 
-	print_centered('croqu-8', 64, 14, 7)
+	-- print_centered('croqu-8', 64, 14, 7)
 
 	if (num_players > 0) and (time() % 1.0) > 0.5 then
 		print_centered('press 🅾️', 64, 100, 7)
@@ -650,7 +660,7 @@ function draw_title_screen()
 
 	-- Pole
 
-	local x1, x2, y1 = 30, 34, 48
+	local x1, x2, y1 = 30, 34, 49
 
 	rectfill(x1, y1, x2, 128, 4)
 	line(x1, y1, x1, 128, 9)
@@ -678,6 +688,7 @@ function draw_title_screen()
 
 		local col = p.color_main
 		if (col == 11) col = 7
+		-- if (col == 15) col = 12
 
 		if p.enabled then
 			if p.cpu then
@@ -706,37 +717,35 @@ function draw_game_finished()
 
 	poke(0x5f5f,0x10)
 	pal(DISPLAY_PALETTE, 1)
-	memset(0x5f70, 0xff, 4)
+	pal({[0]=0, 1, 2, -4, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15}, 2)
+	memset(0x5f70, 0xff, 6)
 
 	draw_title_screen_bg()
 
 	-- Make sky a sunset instead
-	local p1 = 0b0010100001011010
-	local p2 = 0b0101101001111111
 
-	fillp(p1)
-	rectfill(0, 0, 127, 3, 0xC1)
-	fillp(p2)
-	rectfill(0, 4, 127, 7, 0xC1)
-	fillp(p1)
-	rectfill(0, 8, 127, 11, 0xFC)
-	fillp(p2)
-	rectfill(0, 12, 127, 15, 0xFC)
-	fillp(p1)
-	rectfill(0, 16, 127, 19, 0xEF)
-	fillp(p2)
-	rectfill(0, 20, 127, 23, 0xEF)
-	fillp(p1)
-	rectfill(0, 24, 127, 27, 0x9E)
-	fillp(p2)
-	rectfill(0, 28, 127, 31, 0x9E)
+	local p1 = 0b1000001010000101
+	local p2 = 0b1010010110100111
+	local p3 = 0b1101011111111111
+
+	local colors = {1, 3, 12, 14, 9}
+	for idx = 1,#colors - 1 do
+		local col, y = (16 * colors[idx + 1]) + colors[idx], 12 * (idx - 1)
+
+		fillp(p1)
+		rectfill(0, y, 127, y+3, col)
+		fillp(p2)
+		rectfill(0, y+4, 127, y+7, col)
+		fillp(p3)
+		rectfill(0, y+8, 127, y+11, col)
+	end
 	fillp()
 
 	for p in all(players) do
 		if (p.enabled) assert(p.finish_position)
 	end
 
-	local y = 40
+	local y = 49
 	print_centered('turns', 88, y, 7)
 	print_centered('shots', 112, y, 7)
 	y += 8
@@ -2265,6 +2274,38 @@ __gfx__
 000000003a555933361115333966643300000000000000005d3d5d35300000003386233333822333338223333382233333862333338223333382233333822333
 0000000033a9933333655333339443330000000000000000535353d5300000003333333333333333333333333333333333333333333333333333333333333333
 000000003333333333333333333333330000000000000000355333d3d00000003333333333333333333333333333333333333333333333333333333333333333
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccc77cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccc77777ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccc7777777cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc77cccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc77777ccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc7777777cccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccc77ccccccccccccccccccccccccccccccccccccccccccc0cc0ccc0cccccccc00c000cc0cc00cccccccccccccccccccccccccccccccccccccccccccccccccc
+cc77777ccccccccccccccccccccccccccccccccccccccccc0c0c0ccc0ccccccc0cccc0cc0c0c0c0ccccccccccccccccccccccccccccccccccccccccccccccccc
+c7777777cccccccccccccccccccccccccccccccccccccccc000c0ccc0cccccccc0ccc0cc000c00cccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccc0c0c0ccc0ccccccccc0cc0cc0c0c0c0ccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccc0c0c000c000ccccc00ccc0cc0c0c0c0ccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccffffcc88888cccccccccccaaaacc7cccc7ccbbbbbc49494ccccccccccccccccccccccccccccccccccc77ccc
+ccccccccccccccccccccccccccccccccccccccccffffffc888888cc55650ccaaaaaac7cccc7cbbbbbbc49494ccccccccccccccccccccccccccccccccc77777cc
+ccccccccccccccccccccccccccccccccccccccccffccffc88cc88c5060000caaccaac7cccc7cbbccccccc4cccccccccccccccccccccccccccccccccc7777777c
+ccccccccccccccccccccccccccccccccccccccccffccccc88cc88c0070000caaccaac7cccc7cbbbbbcccc4cccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccffccccc88cc88c0070000caaccaac7cccc7cbbbbbcccc4cccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccffccffc88888cc0070000caacaacc7cccc7cbbccccccc4cccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccffffffc88cc88c0060001caaaaaac7cccc7cbbbbbbccc4cccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccffffcc88cc88cc00601cccaacaac777777ccbbbbbccc4cccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc77ccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc77777cccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc7777777ccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 __sfx__
 910600001863500000036000060001600006000160001600000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
 490600002463500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
