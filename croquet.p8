@@ -93,8 +93,6 @@ AI_TARGET_PAST_BALL_DISTANCE = 8
 AI_TARGET_AHEAD_OF_WICKET_DISTANCE = 8
 AI_CLEAR_SHOT_MIN_BALL_DISTANCE = 64
 AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED = AI_CLEAR_SHOT_MIN_BALL_DISTANCE
-AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE = 128
-AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE_EASY_SHOT = 24
 
 --
 -- Graphics Consts
@@ -789,6 +787,10 @@ function cpu_get_target()
 	local player = players[player_idx]
 	local player_ball, next_wicket = player.ball, WICKETS[player.last_wicket_idx + 1]
 
+	for ball in all(balls) do
+		ball.cpu_target_score = nil
+	end
+
 	local tx, ty = next_wicket[1], next_wicket[2]
 	local dx, dy = tx - player_ball.x, ty - player_ball.y
 	local d = distance(dx, dy)
@@ -797,7 +799,7 @@ function cpu_get_target()
 	local easy_shot, wrong_side, target_angle_deg = cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
 	local nearest_ball_d = nearest_ball_distance(player_ball)
 	local clear_shot = nearest_ball_d > AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED
-	local target_blocked = wicket_between(player_ball, tx, ty)
+	local target_blocked = wicket_between(player_ball, tx, ty) and not (abs(dx) < 3 and abs(dy) < 4)
 
 	-- With no other balls in the way, this CPU player is too good - it can win before another player has a chance
 	-- But it does much worse when other balls are involved
@@ -874,8 +876,8 @@ function cpu_get_target()
 			local angle_factor = max(0, target_angle_deg - 30) / 60
 
 			-- 32: 0
-			-- 128: 1
-			local distance_factor = max(0, d - 32) / 160
+			-- 96: 1
+			local distance_factor = max(0, d - 32) / 64
 
 			play_safe_chance = 2 * angle_factor * distance_factor
 
@@ -968,13 +970,13 @@ function cpu_get_target()
 
 	end
 
-	local target_ball
+	local target_ball, next_wicket_score
 
 	if target_blocked or not player.bonus_shots then
 		-- No bonus shots, so target another ball to get them
-		-- Or target is blocked
+		-- Or target is blocked, so target another ball because it's likely the only option
 
-		target_ball = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
+		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
 
 		if target_ball then
 			tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 0.5)
@@ -1041,6 +1043,7 @@ function cpu_get_target()
 		targeting_ball=targeting_ball,
 		lead_point_gap=lead_point_gap,
 		play_safe_chance=play_safe_chance,
+		next_wicket_score=next_wicket_score,
 	}
 end
 
@@ -1211,38 +1214,51 @@ end
 function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
 
 	local tx, ty = next_wicket[1], next_wicket[2]
-	local d = distance(tx - player_ball.x, ty - player_ball.y)
+	local d_self_target = distance(tx - player_ball.x, ty - player_ball.y)
 
-	-- Only target a ball if the weighted distance is less than this
-	local best_score = 0.75 * d
-	if (next_wicket.pole) best_score = 0.5 * d
+	if (d_self_target < 1) return nil, d_self_target
+
+	-- Only target a ball if the score is less than this
+	local next_wicket_score = d_self_target
+
+	-- Make it less likely to target another ball when going for a pole
+	if (next_wicket.pole) next_wicket_score *= 0.5
 
 	if wrong_side or target_blocked then
-		-- In one of these cases, always go for closest ball (within a reasonable range)
-		best_score = AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE
+		-- In one of these cases always go for closest ball, within a reasonable range
+		next_wicket_score = 128
 	elseif easy_shot then
 		-- May still want to target another ball just to move it - but only if it's not far out of the way
-		best_score = min(best_score, AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE_EASY_SHOT)
+		next_wicket_score = min(next_wicket_score, 24)
 	end
-	best_score = min(best_score, AI_TARGET_BALL_MAX_WEIGHTED_DISTANCE)
+	next_wicket_score = min(next_wicket_score, 128)
+
+	local best_score = next_wicket_score
 
 	-- Figure out best ball to target for bonus shot
 	local target_ball
 	for b in all(balls) do
 		if b != player_ball and not wicket_between(player_ball, b.x, b.y, true, 1.5) then
 
-			local d_self = distance(b.x - player_ball.x, b.y - player_ball.y)
+			local d_ball_self = distance(b.x - player_ball.x, b.y - player_ball.y)
 
 			local dx_target = b.x - tx
-			local d_target = distance(dx_target, b.y - ty)
+			local d_ball_target = distance(dx_target, b.y - ty)
 
-			local score = 0.75 * d_self + 0.25 * d_target
+			local score = d_ball_self + d_ball_target
+			assert(score > 0) -- check overflow didn't happen
+			score -= d_self_target
+			assert(score > 0)
+			score += min(d_ball_self, 2 * d_ball_target)
+			assert(score > 0)
 
 			-- Penalize if other ball is on wrong side of target (unless we're also on wrong side)
 			if not (next_wicket.pole or wrong_side) then
 				if ((not next_wicket.reverse) and dx_target > 2) score *= 2
 				if (next_wicket.reverse and dx_target < -2) score *= 2
 			end
+
+			b.cpu_target_score = score
 
 			if score < best_score then
 				-- This is the best candidate so far
@@ -1251,7 +1267,7 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 		end
 	end
 
-	return target_ball
+	return target_ball, next_wicket_score
 end
 
 function cpu_determine_target_power_angle(player_ball, tx, ty, target_ball)
@@ -1545,12 +1561,12 @@ function _update60()
 
 			if game_started and moving_cooldown <= 0 then
 
-				if (key == '7') player.bonus_shots = nil
-				if (key == '8') player.bonus_shots = 0
-				if (key == '9') player.bonus_shots = 1
-				if (key == '0') player.bonus_shots = 2
-
 				local update_cpu_target = false
+
+				if (key == '7') player.bonus_shots, update_cpu_target = nil, true
+				if (key == '8') player.bonus_shots, update_cpu_target = 0, true
+				if (key == '9') player.bonus_shots, update_cpu_target = 1, true
+				if (key == '0') player.bonus_shots, update_cpu_target = 2, true
 
 				if key == 'i' then
 					if debug_force_safe_rand == 0 then
@@ -1569,12 +1585,16 @@ function _update60()
 					update_cpu_target = true
 				end
 
-				if (key == '[') player.last_wicket_idx += 1
+				if key == '[' then
+					player.last_wicket_idx += 1
+					update_cpu_target = true
+				end
 
 				if key == ']' then
 					next_player()
 					player = players[player_idx]
 					player_ball = player.ball
+					update_cpu_target = true
 				end
 
 				local moved = false
@@ -2213,12 +2233,21 @@ function _draw()
 
 			if player.cpu_target then
 				print('')
-				print('tx=' .. player.cpu_target.x)
-				print('ty=' .. player.cpu_target.y)
+				-- print('tx=' .. player.cpu_target.x)
+				-- print('ty=' .. player.cpu_target.y)
 				print('td=' .. player.cpu_target.d)
 				print('tp=' .. player.cpu_target.power)
-				print('ta=' .. (player.cpu_target.angle * 360))
+				-- print('ta=' .. (player.cpu_target.angle * 360))
 				print('deg=' .. player.cpu_target.target_angle_deg)
+
+				if (player.cpu_target.easy_shot) print('easy_shot')
+				if (player.cpu_target.target_blocked) print('target_blocked')
+				if (player.cpu_target.wrong_side) print('wrong_side')
+				if (player.cpu_target.clear_shot) print('clear_shot')
+				if (player.cpu_target.targeting_ball) print('targeting_ball')
+
+				print('gap=' .. player.cpu_target.lead_point_gap)
+				print('slop=' .. player.cpu_target.slop)
 
 				if not player.cpu_target.play_safe_chance then
 					print('saf=nil')
@@ -2232,14 +2261,15 @@ function _draw()
 					print('saf=' .. player.cpu_target.play_safe_chance)
 				end
 
-				if (player.cpu_target.easy_shot) print('easy_shot')
-				if (player.cpu_target.target_blocked) print('target_blocked')
-				if (player.cpu_target.wrong_side) print('wrong_side')
-				if (player.cpu_target.clear_shot) print('clear_shot')
-				if (player.cpu_target.targeting_ball) print('targeting_ball')
+				color(7)
+				if (player.cpu_target.next_wicket_score) print(player.cpu_target.next_wicket_score)
 
-				print('gap=' .. player.cpu_target.lead_point_gap)
-				print('slop=' .. player.cpu_target.slop)
+				-- for ball in all(balls) do
+				for player in all(players) do
+					color(player.color_main)
+					local b = player.ball
+					if (b and b.cpu_target_score) print(b.cpu_target_score)
+				end
 			end
 		end
 	end
