@@ -20,8 +20,8 @@ BALL_POLE_D2 = BALL_POLE_D*BALL_POLE_D
 MOVING_COOLDOWN_FRAMES = 60
 SHOT_POWER_METER_RATE = 1/64
 SHOT_POWER_METER_FALL_RATE = -1/32
-SHOT_POWER_ERR_MAX_POWER = 5/360
-SHOT_POWER_ERR_OVER = 15/360
+SHOT_POWER_ERR_MAX_POWER = 10/360
+SHOT_POWER_ERR_OVER = 20/360
 
 ANGLE_STEP = 1/256
 
@@ -870,11 +870,11 @@ function cpu_get_target()
 
 		else
 			-- 30: 0
-			-- 75: 1
-			local angle_factor = max(0, target_angle_deg - 30) / 45
+			-- 60: 1
+			local angle_factor = max(0, target_angle_deg - 30) / 60
 
 			-- 32: 0
-			-- 192: 1
+			-- 128: 1
 			local distance_factor = max(0, d - 32) / 160
 
 			play_safe_chance = 2 * angle_factor * distance_factor
@@ -1018,7 +1018,7 @@ function cpu_get_target()
 
 	if (target_ball and lead_point_gap <= 0) slop -= 1
 
-	target_power, target_angle = cpu_add_error(target_power, target_angle, max(slop, 0))
+	target_power, target_angle = cpu_add_error(target_power, target_angle, slop)
 
 	target_angle = round(target_angle * 256) / 256
 	target_power = clip_num(target_power, SHOT_POWER_METER_RATE, 1.0)
@@ -1275,19 +1275,29 @@ end
 
 function cpu_add_error(target_power, target_angle, slop)
 
-	-- TODO: multiply r by slop (might need to rebalance the other values too)
-	local r = rnd() - 0.5
-	local angle_err = ANGLE_STEP
+	slop = max(0, slop)
+
+	local r, angle_err_step = slop * (rnd() - 0.5), 0
 	if abs(r) > 0.4 then
-		angle_err *= 2
-	elseif abs(r) < 0.25 then
-		angle_err = 0
+		angle_err_step = 2
+	elseif abs(r) > 0.25 then
+		angle_err_step = 1
 	end
-	target_angle = (target_angle + slop * sgn(r) * angle_err) % 1.0
+
+	-- When slop is quite high, always add a bit of error
+	if (slop >= 3) angle_err_step = max(1, angle_err_step)
+
+	-- Increase/decrease angle error depending on distance
+	-- (slop is less believable at short distances)
+	if (target_power > 0.75) angle_err_step *= 1.5
+	if (target_power < 0.25) angle_err_step *= 0.5
+	if (target_power < 0.125) angle_err_step *= 0.5
+
+	target_angle += sgn(r) * angle_err_step * ANGLE_STEP
 
 	target_power += slop * (rnd() - 0.5) / 32
 
-	return target_power, target_angle
+	return target_power, target_angle % 1.0
 end
 
 --
@@ -1612,10 +1622,10 @@ function _update60()
 				if (not player.cpu_target) player.cpu_target = cpu_get_target()
 
 				if shot_power_change == 0 then
-					local angle_err = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
-					if angle_err >= ANGLE_STEP then
+					local angle_err_step = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
+					if angle_err_step >= ANGLE_STEP then
 						right = true
-					elseif angle_err <= -ANGLE_STEP then
+					elseif angle_err_step <= -ANGLE_STEP then
 						left = true
 					else
 						op = true  -- Start shot
