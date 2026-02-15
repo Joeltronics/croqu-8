@@ -550,24 +550,25 @@ function update_title_screen()
 
 	if btnp(0) then
 		-- Left
-		if player.cpu then
-			player.cpu = false
-		elseif player.enabled then
-			player.enabled = false
-		else
+		if not player.enabled then
 			player.enabled = true
 			player.cpu = true
+		elseif player.cpu then
+			player.cpu = false
+		else
+			player.enabled = false
 		end
 	end
 	if btnp(1) then
 		-- Right
-		if player.cpu then
+		if not player.enabled then
+			player.enabled = true
+			player.cpu = false
+		elseif player.cpu then
 			player.enabled = false
 			player.cpu = false
-		elseif player.enabled then
-			player.cpu = true
 		else
-			player.enabled = true
+			player.cpu = true
 		end
 	end
 
