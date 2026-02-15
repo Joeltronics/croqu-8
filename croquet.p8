@@ -591,7 +591,7 @@ function update_title_screen()
 	if (num_players > 0) and btnp(4) then
 
 		-- player_idx = ceil(rnd(#players)) would work - next_player() will skip to next valid
-		-- but this would not be fair when not using all players
+		-- but this would not be fair when not using all players, some players would be more likely to start than others
 		local valid_player_idxs = {}
 		for idx = 1,#players do
 			if (players[idx].enabled) add(valid_player_idxs, idx)
@@ -658,14 +658,14 @@ function draw_title_screen()
 
 	-- Pole
 
-	local x1, x2, y1 = 30, 34, 49
+	local x1, x2, y1 = 30, 34, 47
 
 	rectfill(x1, y1, x2, 128, 4)
 	line(x1, y1, x1, 128, 9)
 	line(x2, y1, x2, 128, 2)
-	rectfill(x1+1, y1-2, x2-1, y1, 10)
-	pset(x1, y1-1, 10)
-	pset(x2, y1-1, 10)
+	rectfill(x1+1, y1-2, x2-1, y1, 9)
+	pset(x1, y1-1, 9)
+	pset(x2, y1-1, 9)
 
 	pal()
 	palt()
@@ -685,8 +685,8 @@ function draw_title_screen()
 		line(x2, py1-1, x2, py2-1, p.color_dark)
 
 		local col = p.color_main
+		-- Print green as white
 		if (col == 11) col = 7
-		-- if (col == 15) col = 12
 
 		if p.enabled then
 			if p.cpu then
@@ -695,7 +695,7 @@ function draw_title_screen()
 				print_centered('player', 64, py1, col)
 			end
 		else
-			print_centered('off', 64, py1, 0)
+			print_centered('off', 64, py1, 6)
 		end
 
 		if idx == player_idx then
@@ -1513,6 +1513,7 @@ function launch_ball()
 
 	if shot_power_over then
 		-- Add extra error
+		-- Range: [1.0, 1.0) * SHOT_POWER_ERR_OVER
 		angle_rand *= 2 * SHOT_POWER_ERR_OVER
 	else
 		-- Add a little bit of randomness to hard shots
@@ -1804,7 +1805,7 @@ end
 
 function update_select_starting_point()
 	local player = players[player_idx]
-	local player_ball = player.ball, btnp(4)
+	local player_ball = player.ball
 	local left, right, up, down
 
 	assert(player_ball)
@@ -1887,10 +1888,8 @@ function draw_club()
 	pelogen_tri_low(c[3][1], c[3][2], c[4][1], c[4][2], c[1][1], c[1][2], 4)
 
 	-- Sides - (pelogen_tri_low seems to have different rounding behavior, so these aren't necessarily covered)
-	local col2 = 4
-	if (abs(dy) >= 0.25) col2 = 2
 	line(c[1][1], c[1][2], c[2][1], c[2][2], 4)
-	line(c[3][1], c[3][2], c[4][1], c[4][2], col2)
+	line(c[3][1], c[3][2], c[4][1], c[4][2], 2)
 
 	-- Ends
 	line_round(c[1][1], c[1][2], c[4][1], c[4][2], 5)
@@ -1901,10 +1900,8 @@ function draw_club()
 		local x1, y1 = lerp_round(c[1][1], c[2][1], i/5), lerp_round(c[1][2], c[2][2], i/5)
 		local x2, y2 = lerp_round(c[4][1], c[3][1], i/5), lerp_round(c[4][2], c[3][2], i/5)
 		line(x1, y1, x2, y2, player.color_main)
-		if abs(dy) >= 0.25 then
-			pset(x1, y1, player.color_light)
-			pset(x2, y2, player.color_dark)
-		end
+		pset(x1, y1, player.color_light)
+		pset(x2, y2, player.color_dark)
 	end
 end
 
@@ -1914,6 +1911,7 @@ function draw_status_bar()
 	line(STATUS_BAR_WIDTH, 1, STATUS_BAR_WIDTH, 128, 2)
 	line(0, 1, 0, 128, 9)
 	line(0, 0, STATUS_BAR_WIDTH, 0, 9)
+	ovalfill(0, -2, STATUS_BAR_WIDTH, 2, 9)
 	pset(0, 0, 10)
 	pset(STATUS_BAR_WIDTH, 0, 4)
 
@@ -1923,29 +1921,29 @@ function draw_status_bar()
 		local main_color, textcol = p.color_main, 7
 		if (p.color_main >= 9) textcol = 0
 
-		local y1 = 9*idx-1
+		local y1 = 9*idx + 1
 		local y2 = y1 + 6
 
-		rectfill(1, y1, STATUS_BAR_WIDTH-1, y2, main_color)
-		line(0, y1, 0, y2, p.color_light)
-		line(STATUS_BAR_WIDTH, y1, STATUS_BAR_WIDTH, y2, p.color_dark)
-
+		palt()
+		pal(p.palette)
+		sspr(40, 8, 9, 9, 0, y1-2)
+		reset_palette()
 		if (p.enabled) print_centered(p.last_wicket_idx - 1, 5, y1+1, textcol)
 
 		local x = STATUS_BAR_WIDTH + 4
 
 		if p.finish_position then
 			if p.finish_position <= 3 then
-				spr(48 + p.finish_position, x - 2, y1)
+				spr(48 + p.finish_position, x - 2, y1 - 1)
 			else
 				circfill(x + 1, y1 + 3, 3, 0)
-				print(p.finish_position, x, y1 + 1, 7)
+				print(p.finish_position, x, y1, 7)
 			end
 
 		elseif idx == player_idx then
 			pal(p.ball.palette)
 			for i = 1,p.shots do
-				spr(30, x-3, y1)
+				spr(30, x-3, y1 - 1)
 				x += 6
 			end
 			reset_palette()
@@ -1954,11 +1952,11 @@ function draw_status_bar()
 				for i=1,2 do
 					if (i <= p.bonus_shots) then
 						pal(p.ball.palette)
-						spr(7, x-3, y1)
+						spr(7, x-3, y1 - 1)
 						reset_palette()
-						circ(x, y1 + 3, 2, textcol)
+						circ(x, y1 + 2, 2, textcol)
 					else
-						circ(x, y1 + 3, 2, textcol)
+						circ(x, y1 + 2, 2, textcol)
 					end
 					x += 6
 				end
@@ -2290,15 +2288,15 @@ __gfx__
 00000000338223333555555333333833333303333330333300000000330003333386233333822333338223333382233333862333338223333382233333822333
 00000000333333333355553333333333333333333330333300000000333333333333333333333333333333333333333333333333333333333333333333333333
 00000000333333333333333333333333333333333333333300000000333333333333333333333333333333333333333333333333333333333333333333333333
-00000000333333333333333333333333000000000000000000000000f33333333333333333333333333333333333333333333333333333333333333333333333
-000000003333333333373333333733330000000000000000000000008333333333e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
-00000000333333333367333333373333000000000000000000000000033333333e7888333e8776333e777833367788333e8878333e8886333e88883336888833
-00000000333333333637333333373333000000000000000000000000a33333333878883338788833368886333888783338887833388878333688863338788833
-00000000e55555336337333333373333000000000000000000000000b33333333878823336888233388882333888853338887233367782333877723338877233
-00000000333335333337333333373333000000000000000000000000933333333386233333822333338223333382233333862333338223333382233333822333
-00000000333335333337333333373333000000000000000000000000433333333333333333333333333333333333333333333333333333333333333333333333
-00000000333335333337333333373333000000000000000000000000433333333333333333333333333333333333333333333333333333333333333333333333
-00000000333335333337333300000000000000000000000000000000333333333333333333333333333333333333333333333333333333333333333333333333
+0000000033333333333333333333333300000000e000000020000000f33333333333333333333333333333333333333333333333333333333333333333333333
+0000000033333333333733333337333300000000e8000008200000008333333333e6833333ee833333ee833333ee833333e6833333ee833333ee833333ee8333
+0000000033333333336733333337333300000000e888888820000000033333333e7888333e8776333e777833367788333e8878333e8886333e88883336888833
+0000000033333333363733333337333300000000e888888820000000a33333333878883338788833368886333888783338887833388878333688863338788833
+00000000e5555533633733333337333300000000e888888820000000b33333333878823336888233388882333888853338887233367782333877723338877233
+0000000033333533333733333337333300000000e888888820000000933333333386233333822333338223333382233333862333338223333382233333822333
+0000000033333533333733333337333300000000e888888820000000433333333333333333333333333333333333333333333333333333333333333333333333
+00000000333335333337333333373333000000000888888800000000433333333333333333333333333333333333333333333333333333333333333333333333
+00000000333335333337333300000000000000000088888000000000333333333333333333333333333333333333333333333333333333333333333333333333
 000000003333353333373333000000000000000000000000000000003333333333ee633333ee833333ee833333ee833333ee8333337e83333377633333e76333
 00000000333335333337333300000000000000000000000000000000333333333e8887333e8888333e8888333e8888333788883337888833378888333e888633
 00000000333335333363333300000000000000000000000000000000333333333888873338888633388888333688883336888833368888333888883338888633
@@ -2323,24 +2321,24 @@ cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc7777777cccccccccccccccc
 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccc77ccccccccccccccccccccccccccccccccccccccccccc0cc0ccc0cccccccc00c000cc0cc00cccccccccccccccccccccccccccccccccccccccccccccccccc
-cc77777ccccccccccccccccccccccccccccccccccccccccc0c0c0ccc0ccccccc0cccc0cc0c0c0c0ccccccccccccccccccccccccccccccccccccccccccccccccc
-c7777777cccccccccccccccccccccccccccccccccccccccc000c0ccc0cccccccc0ccc0cc000c00cccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccc0c0c0ccc0ccccccccc0cc0cc0c0c0c0ccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccccccccc0c0c000c000ccccc00ccc0cc0c0c0c0ccccccccccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccccccccccccc0cc0ccc0cccccccc00c000cccaccc00cccccccccccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccccccccccccc0c0c0ccc0ccccccc0cccc0ccaaaaac0c0ccccccccccccccccccccccccccccccccccccccccccccccc
+cccc77cccccccccccccccccccccccccccccccccccccccccc000c0ccc0cccccccc0ccc0cccaaacc00cccccccccccccccccccccccccccccccccccccccccccccccc
+cc77777ccccccccccccccccccccccccccccccccccccccccc0c0c0ccc0ccccccccc0cc0cccaaacc0c0ccccccccccccccccccccccccccccccccccccccccccccccc
+c7777777cccccccccccccccccccccccccccccccccccccccc0c0c000c000ccccc00ccc0ccaacaac0c0ccccccccccccccccccccccccccccccccccccccccccccccc
 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccffffcc88888cccccccccccaaaacc7cccc7ccbbbbbc49494ccccccccccccccccccccccccccccccccccc77ccc
-ccccccccccccccccccccccccccccccccccccccccffffffc888888cc55650ccaaaaaac7cccc7cbbbbbbc49494ccccccccccccccccccccccccccccccccc77777cc
-ccccccccccccccccccccccccccccccccccccccccffccffc88cc88c5060000caaccaac7cccc7cbbccccccc4cccccccccccccccccccccccccccccccccc7777777c
-ccccccccccccccccccccccccccccccccccccccccffccccc88cc88c0070000caaccaac7cccc7cbbbbbcccc4cccccccccccccccccccccccccccccccccccccccccc
-ccccccccccccccccccccccccccccccccccccccccffccccc88cc88c0070000caaccaac7cccc7cbbbbbcccc4cccccccccccccccccccccccccccccccccccccccccc
-ccccccccccccccccccccccccccccccccccccccccffccffc88888cc0070000caacaacc7cccc7cbbccccccc4cccccccccccccccccccccccccccccccccccccccccc
-ccccccccccccccccccccccccccccccccccccccccffffffc88cc88c0060001caaaaaac7cccc7cbbbbbbccc4cccccccccccccccccccccccccccccccccccccccccc
-cccccccccccccccccccccccccccccccccccccccccffffcc88cc88cc00601cccaacaac777777ccbbbbbccc4cccccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccfffffcc888888cccccccccccaaaaacc7cccc7ccbbbbbbc4944494ccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccfffffffc8888888cccccccccaaaaaaac7cccc7cbbbbbbbc4944494ccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccffcccffc88ccc88cc55650ccaacccaac7cccc7cbbccccccccc4ccccccccccccccccccccccccccccccccccc77ccc
+cccccccccccccccccccccccccccccccccccccffcccccc88ccc88c5060000caacccaac7cccc7cbbccccccccc4ccccccccccccccccccccccccccccccccc77777cc
+cccccccccccccccccccccccccccccccccccccffcccccc88ccc88c0070000caacccaac7cccc7cbbbbbbccccc4cccccccccccccccccccccccccccccccc7777777c
+cccccccccccccccccccccccccccccccccccccffcccccc888888cc0070000caacccaac7cccc7cbbbbbbccccc4cccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccffcccccc8888888c0070000caacccaac7cccc7cbbccccccccc4cccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccffcccffc88ccc88c0060001caaccaacc7cccc7cbbccccccccc4cccccccccccccccccccccccccccccccccccccccc
+cccccccccccccccccccccccccccccccccccccfffffffc88ccc88cc00601ccaaaaaaac7cccc7cbbbbbbbcccc4cccccccccccccccccccccccccccccccccccccccc
+ccccccccccccccccccccccccccccccccccccccfffffcc88ccc88ccccccccccaaacaac777777ccbbbbbbcccc4cccccccccccccccccccccccccccccccccccccccc
 ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc77ccccccccccccccccccccccccccc
 ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc77777cccccccccccccccccccccccccc
 cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc7777777ccccccccccccccccccccccccc
