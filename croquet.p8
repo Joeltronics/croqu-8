@@ -124,6 +124,9 @@ PALETTES = {
 
 SHOT_POWER_COLORS = {1, 12, 11, 10, 9}
 
+OVER_POWER_SCREEN_SHAKE_TIME = 20
+OVER_POWER_SCREEN_SHAKE_DIV = 5
+
 --
 -- Globals
 --
@@ -149,6 +152,8 @@ shot_angle = 0
 shot_power = 0
 shot_power_change = 0
 shot_power_over = false
+
+over_power_screen_shake = 0
 
 moving_cooldown = 0
 
@@ -1543,6 +1548,8 @@ function launch_ball()
 	-- Play sound
 	sfx(clip_num(flr(shot_power * 4), 0, 3))
 	sfx(clip_num(7 + flr(shot_power * 4), 7, 10))
+
+	if (shot_power_over) over_power_screen_shake = OVER_POWER_SCREEN_SHAKE_TIME
 end
 
 function _update60()
@@ -1968,10 +1975,11 @@ function draw_status_bar()
 	if shot_power > 0 or shot_power_change != 0 then
 		-- Shot power meter
 		local col = shot_power_color()
+		local x_offset = -((over_power_screen_shake \ OVER_POWER_SCREEN_SHAKE_DIV) % 2)
 		local y = 125 - 60*shot_power
-		rectfill(3, y, 5, 127, col)
-		rect(2, 64, 6, 128, 0)
-		print('◀', STATUS_BAR_WIDTH - 1, y-2, col)
+		rectfill(3 + x_offset, y, 5 + x_offset, 127, col)
+		rect(2 + x_offset, 64, 6 + x_offset, 128, 0)
+		print('◀', STATUS_BAR_WIDTH - 1 + x_offset, y-2, col)
 	end
 
 	if not debug_draw_primitives then
@@ -1979,6 +1987,8 @@ function draw_status_bar()
 		spr(54, 0, 124, 2, 1)
 		reset_palette()
 	end
+
+	over_power_screen_shake = max(over_power_screen_shake - 1, 0)
 end
 
 function _draw()

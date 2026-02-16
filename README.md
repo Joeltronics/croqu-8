@@ -31,8 +31,6 @@ Includes some code by others (all CC4-BY-NC-SA):
 
 ## TODO
 
-Graphical effects for powerful shots, hits, etc. Maybe make the power bar shake to show if you went over max power?
-
 Sound effects for things like scoring, finishing, etc
 
 Better title screen logo
