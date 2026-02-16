@@ -785,6 +785,8 @@ function draw_game_finished()
 		y += 8
 	end
 
+	print_centered('press 🅾️ to restart', 64, 110, 7)
+
 	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
 end
 
@@ -1447,7 +1449,8 @@ function add_wicket_collision_points(idx, wicket)
 end
 
 function _init()
-	players, balls, WICKET_COLLISION_POINTS = {}, {}, {}
+	reset()
+	players, balls, WICKET_COLLISION_POINTS, num_players_finished, player_idx, game_started, game_finished = {}, {}, {}, 0, 1, false, false
 
 	-- Add hidden wickets first
 	for idx = 1,#WICKETS do
@@ -1572,8 +1575,12 @@ end
 function do_update()
 
 	local player = players[player_idx]
-	local player_ball, op, x = player.ball, btnp(4), btn(5)
-	local left, right, up, down = btn(0), btn(1), btn(2), btn(3)
+	local player_ball, left, right, up, down, op, x = player.ball, btn(0), btn(1), btn(2), btn(3), btnp(4), btn(5)
+
+	if game_finished then
+		if (op) _init()
+		return
+	end
 
 	if DEBUG then
 		while stat(30) do
@@ -1587,6 +1594,8 @@ function do_update()
 			if game_started and moving_cooldown <= 0 then
 
 				local update_cpu_target = false
+
+				if (key == '6') player.last_wicket_idx = #WICKETS - 1
 
 				if (key == '7') player.bonus_shots, update_cpu_target = nil, true
 				if (key == '8') player.bonus_shots, update_cpu_target = 0, true
@@ -1959,7 +1968,7 @@ function draw_status_bar()
 				spr(48 + p.finish_position, x - 2, y1 - 1)
 			else
 				circfill(x + 1, y1 + 3, 3, 0)
-				print(p.finish_position, x, y1, 7)
+				print(p.finish_position, x, y1 + 1, 7)
 			end
 
 		elseif idx == player_idx then
@@ -2269,7 +2278,7 @@ function _draw()
 				if (player.cpu_target.clear_shot) print('clear_shot')
 				if (player.cpu_target.targeting_ball) print('targeting_ball')
 
-				print('gap=' .. player.cpu_target.lead_point_gap)
+				-- print('gap=' .. player.cpu_target.lead_point_gap)
 				print('slop=' .. player.cpu_target.slop)
 
 				-- if not player.cpu_target.play_safe_chance then
