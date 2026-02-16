@@ -157,8 +157,11 @@ over_power_screen_shake = 0
 
 moving_cooldown = 0
 
+cpu_draw = 0
+
 debug_last_dv = nil
 
+debug_turbo = false
 debug_pause_physics = false
 debug_no_draw_tops = false
 debug_draw_primitives = false
@@ -1554,7 +1557,19 @@ end
 
 function _update60()
 
-	if (game_finished) return
+	do_update()
+	local cpu_update_one = stat(1)
+
+	if debug_turbo then
+		while stat(1) < (0.98 - cpu_draw - cpu_update_one) do
+			do_update()
+		end
+	end
+
+	cpu_update = stat(1)
+end
+
+function do_update()
 
 	local player = players[player_idx]
 	local player_ball, op, x = player.ball, btnp(4), btn(5)
@@ -1563,6 +1578,7 @@ function _update60()
 	if DEBUG then
 		while stat(30) do
 			local key = stat(31)
+			if (key == '`') debug_turbo = not debug_turbo
 			if (key == '1') debug_draw_primitives = not debug_draw_primitives
 			if (key == '2') debug_increase_shot_pointer_length = not debug_increase_shot_pointer_length
 			if (key == '3') debug_no_draw_tops = not debug_no_draw_tops
@@ -1807,8 +1823,6 @@ function _update60()
 	moving_cooldown = max(moving_cooldown, 0)
 	camera_x = clip_num(camera_x, 64 - STATUS_BAR_WIDTH, WIDTH-64)
 	camera_y = clip_num(camera_y, 64, HEIGHT-64)
-
-	cpu_update = stat(1)
 end
 
 function update_select_starting_point()
@@ -2221,14 +2235,14 @@ function _draw()
 
 		-- print('mem:' .. stat(0))
 		local cpu = stat(1)
-		-- local cpu_draw = cpu - cpu_update
+		cpu_draw = cpu - cpu_update
 		-- print('cpu:' .. round(cpu * 100) .. '=' .. round(cpu_update * 100) .. '+' .. round(cpu_draw * 100))
 		print(round(cpu * 100))
 
 		if not player.finish_position then
 
-			print('x=' .. player_ball.x)
-			print('y=' .. player_ball.y)
+			-- print('x=' .. player_ball.x)
+			-- print('y=' .. player_ball.y)
 			print('m=' .. moving_cooldown)
 			if (moving_cooldown <= 0) then
 				print('p=' .. shot_power)
@@ -2244,10 +2258,10 @@ function _draw()
 				print('')
 				-- print('tx=' .. player.cpu_target.x)
 				-- print('ty=' .. player.cpu_target.y)
-				print('td=' .. player.cpu_target.d)
-				print('tp=' .. player.cpu_target.power)
+				-- print('td=' .. player.cpu_target.d)
+				-- print('tp=' .. player.cpu_target.power)
 				-- print('ta=' .. (player.cpu_target.angle * 360))
-				print('deg=' .. player.cpu_target.target_angle_deg)
+				-- print('deg=' .. player.cpu_target.target_angle_deg)
 
 				if (player.cpu_target.easy_shot) print('easy_shot')
 				if (player.cpu_target.target_blocked) print('target_blocked')
@@ -2258,17 +2272,17 @@ function _draw()
 				print('gap=' .. player.cpu_target.lead_point_gap)
 				print('slop=' .. player.cpu_target.slop)
 
-				if not player.cpu_target.play_safe_chance then
-					print('saf=nil')
-				elseif debug_force_safe_rand then
-					if debug_force_safe_rand >= 0.5 then
-						print('saf=false')
-					else
-						print('saf=true')
-					end
-				else
-					print('saf=' .. player.cpu_target.play_safe_chance)
-				end
+				-- if not player.cpu_target.play_safe_chance then
+				-- 	print('saf=nil')
+				-- elseif debug_force_safe_rand then
+				-- 	if debug_force_safe_rand >= 0.5 then
+				-- 		print('saf=false')
+				-- 	else
+				-- 		print('saf=true')
+				-- 	end
+				-- else
+				-- 	print('saf=' .. player.cpu_target.play_safe_chance)
+				-- end
 
 				color(7)
 				if (player.cpu_target.next_wicket_score) print(player.cpu_target.next_wicket_score)
