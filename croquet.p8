@@ -92,7 +92,6 @@ AI_TARGET_PAST_WICKET_POLE_DISTANCE = 6
 AI_TARGET_PAST_BALL_DISTANCE = 8
 AI_TARGET_AHEAD_OF_WICKET_DISTANCE = 8
 AI_CLEAR_SHOT_MIN_BALL_DISTANCE = 64
-AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED = AI_CLEAR_SHOT_MIN_BALL_DISTANCE
 
 --
 -- Graphics Consts
@@ -806,27 +805,33 @@ function cpu_get_target()
 	local dx, dy = tx - player_ball.x, ty - player_ball.y
 	local d = distance(dx, dy)
 
+	local shots = player.shots + (player.bonus_shots or 0)
+
 	-- Determine a few flags that will be used later
 	local easy_shot, wrong_side, target_angle_deg = cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
-	local nearest_ball_d = nearest_ball_distance(player_ball)
-	local clear_shot = nearest_ball_d > AI_CLEAR_SHOT_MIN_BALL_DISTANCE_SQUARED
+	local clear_shot = nearest_ball_distance(player_ball) > AI_CLEAR_SHOT_MIN_BALL_DISTANCE
 	local target_blocked = wicket_between(player_ball, tx, ty) and not (abs(dx) < 3 and abs(dy) < 4)
+
+	-- Positive = ahead, negative = behind
+	local lead_point_gap = calculate_lead_point_gap()
+	-- Increase effective score for each 2 shots
+	lead_point_gap += shots \ 2
 
 	-- With no other balls in the way, this CPU player is too good - it can win before another player has a chance
 	-- But it does much worse when other balls are involved
 	-- So add a bit of handicap when there are no other balls anywhere close
 	-- Also add this slop when way ahead of everyone
 	local slop = 0
-	if (clear_shot) slop += 1
+	if (num_players_finished >= num_players - 1) then
+		lead_point_gap = 0
+	else
+		-- 3-4: 1 / 5-6: 2 / 7-8: 3 / 9+: 4
+		if (lead_point_gap >= 3) slop += min(4, flr((lead_point_gap - 1) / 2))
+		if (lead_point_gap <= -2) slop -= 1
+		if (lead_point_gap <= -5) slop -= 1
 
-	-- TODO: increase lead_point_gap when we have lots of extra shots
-	local lead_point_gap = calculate_lead_point_gap()
-	-- 3-4: 1 / 5-6: 2 / 7-8: 3 / 9+: 4
-	if (lead_point_gap >= 3) slop += min(4, flr((lead_point_gap - 1) / 2))
-	if (lead_point_gap <= -2) slop -= 1
-	if (lead_point_gap <= -5) slop -= 1
-
-	-- TODO: if we're the only player not to have finished, set slop to 0
+		if (clear_shot) slop += 1
+	end
 
 	--[[
 	First determine ideal target point, without accounting for other balls
@@ -896,9 +901,9 @@ function cpu_get_target()
 			local slop_factors = { 1, 1.125, 1.25, 1.5 }
 			play_safe_chance *= slop_factors[clip_num(flr(slop) + 1, 1, 4)]
 
-			-- Extra (non bonus) shots factor
+			-- Extra shots factor
 			local shots_factors = {1, 1.5, 2}
-			play_safe_chance *= shots_factors[clip_num(player.shots, 1, 3)]
+			play_safe_chance *= shots_factors[clip_num(shots, 1, 3)]
 
 			-- Factor in point gap - riskier when behind, safer when ahead
 			if lead_point_gap >= 3 then
@@ -928,7 +933,7 @@ function cpu_get_target()
 			-- If this is our last shot and there are other balls near the target,
 			-- play riskier since they might want to hit us
 			local target_nearest_ball_d = nearest_ball_distance(player_ball, tx, ty)
-			if player.shots + (player.bonus_shots or 0) <= 1 and target_nearest_ball_d <= 64 then
+			if shots <= 1 and target_nearest_ball_d <= 64 then
 				--[[
 				1: 1 - 4/8 = 1 - 1/2 = 1/2
 				8: 1 - 4/8 = 1 - 1/2 = 1/2
@@ -984,7 +989,7 @@ function cpu_get_target()
 	local target_ball, next_wicket_score
 
 	if target_blocked or not player.bonus_shots then
-		-- No bonus shots, so target another ball to get them
+		-- No bonus shots yet, so target another ball to get them
 		-- Or target is blocked, so target another ball because it's likely the only option
 
 		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
@@ -1076,31 +1081,23 @@ function cpu_adjust_target_for_ball(tx, ty, target_ball, r)
 end
 
 function cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
+	-- Returns easy_shot, wrong_side, target_angle_deg
 
-	local easy_shot, wrong_side, target_angle_deg = false, false, 0
+	if (next_wicket.pole) return (d < 16), false, 0
 
-	if next_wicket.pole then
-		easy_shot = d < 16
+	if (next_wicket.reverse) dx = -dx
 
-	else
-		if (next_wicket.reverse) dx = -dx
+	local target_angle_deg = abs(((360*atan2(dx, dy) + 180) % 360) - 180)
 
-		wrong_side = dx < 0
+	local easy_shot = (abs(dx) < 16 and target_angle_deg < 30) or (abs(dx) < 8 and abs(dy) < 4)
 
-		target_angle_deg = abs(((360*atan2(dx, dy) + 180) % 360) - 180)
-
-		easy_shot = (abs(dx) < 16 and target_angle_deg < 30) or (abs(dx) < 8 and abs(dy) < 4)
-	end
-
-	return easy_shot, wrong_side, target_angle_deg
+	return easy_shot, (dx < 0), target_angle_deg
 end
 
 function cpu_target_past(player_ball, tx, ty, extra_distance)
 	local dx, dy = tx - player_ball.x, ty - player_ball.y
 	local d = distance(dx, dy)
-	tx += extra_distance * (dx / d)
-	ty += extra_distance * (dy / d)
-	return tx, ty
+	return tx + extra_distance * (dx / d), ty + extra_distance * (dy / d)
 end
 
 function cpu_shift_y_away_from_center_of_wicket(dy)
@@ -1123,7 +1120,7 @@ function nearest_ball_distance(ball, x, y)
 	local d2 = 32767
 	for other_ball in all(balls) do
 		if other_ball != ball then
-			d2 = min(d2, distance_squared(ball.x - other_ball.x, ball.y - other_ball.y))
+			d2 = min(d2, distance_squared(x - other_ball.x, y - other_ball.y))
 		end
 	end
 	return sqrt(d2)
@@ -1135,7 +1132,7 @@ function calculate_lead_point_gap()
 
 	for i = 1,#players do
 		local p = players[i]
-		if i != player_idx and p.enabled then
+		if i != player_idx and p.enabled and not p.finish_position then
 			max_other_player_wicket = max(max_other_player_wicket, p.last_wicket_idx)
 		end
 	end
@@ -1578,6 +1575,7 @@ function do_update()
 	local player_ball, left, right, up, down, op, x = player.ball, btn(0), btn(1), btn(2), btn(3), btnp(4), btn(5)
 
 	if game_finished then
+		-- TODO: I think we can just call run() instead?
 		if (op) _init()
 		return
 	end

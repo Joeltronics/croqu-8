@@ -35,6 +35,8 @@ End screen music?
 
 Better title screen logo
 
+High (low) scores?
+
 Possibly some performance or token count optimizations (although so far, neither seems necessary)
 
 AI improvements:
