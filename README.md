@@ -31,7 +31,7 @@ Includes some code by others (all CC4-BY-NC-SA):
 
 ## TODO
 
-Sound effects for things like scoring, finishing, etc
+End screen music?
 
 Better title screen logo
 
