@@ -261,15 +261,12 @@ end
 
 function sort_z(items)
 	-- Bubblesort items by z value, or y value if z is not found
-	-- FIXME: This bubblesort is wrong (seems to not have any problem though?)
-	for idx1 = 1,#items do
+	for i = 1,#items-1 do
 		local any_swapped = false
-		for idx2 = 1,#items-1 do
-			local item1 = items[idx1]
-			local item2 = items[idx2]
-			if ((item1.z or item1.y) < (item2.z or item2.y)) then
-				items[idx1] = item2
-				items[idx2] = item1
+		for j = 1,#items-i do
+			local item1, item2 = items[j], items[j+1]
+			if ((item1.z or item1.y) > (item2.z or item2.y)) then
+				items[j], items[j+1] = item2, item1
 				any_swapped = true
 			end
 		end
