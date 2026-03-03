@@ -1,7 +1,9 @@
 pico-8 cartridge // http://www.pico-8.com
 version 43
 __lua__
--- By Joel Geddert
+-- all star croquet
+-- by joel geddert
+
 -- License: CC BY-NC-SA 4.0
 
 --
@@ -157,6 +159,7 @@ over_power_screen_shake = 0
 moving_cooldown = 0
 
 cpu_draw = 0
+cpu_update = 0
 
 debug_last_dv = nil
 
@@ -215,7 +218,6 @@ function clip_num(val, minval, maxval)
 end
 
 function lerp(a, b, t)
-	-- return a + t * (b - a)
 	return (1 - t) * a + t * b
 end
 
@@ -400,7 +402,6 @@ function check_wicket_collision(ball, w, dx, dy)
 	ball.y += dy*overlap
 
 	if moving_cooldown > 0 then
-		-- Play sound
 		if w.pole then
 			sfx(4)
 			sfx(5)
@@ -479,8 +480,8 @@ function wicket_collisions()
 	return any_collisions
 end
 
+-- Returns true if any collisions occurred
 function collisions()
-	-- Returns true if any collisions occurred
 	local any_collisions = wicket_collisions()
 	return ball_collisions() or any_collisions
 end
@@ -643,24 +644,10 @@ end
 function draw_title_screen()
 	camera()
 
-	-- Background
 	draw_title_screen_bg()
 
 	-- Header
-	-- palt(12, true)
-	-- rectfill(32, 8, 96, 39, 6)
-	-- rect(32, 8, 96, 39, 4)
 	sspr(0, 32, 128, 32, 0, 8)
-	-- palt(12, false)
-	-- print_centered('all star', 64, 19, 0)
-
-	-- Text besides players
-
-	-- print_centered('croqu-8', 64, 14, 7)
-
-	if (num_players > 0) and (time() % 1.0) > 0.5 then
-		print_centered('press 🅾️', 64, 100, 7)
-	end
 
 	-- Pole
 
@@ -691,7 +678,7 @@ function draw_title_screen()
 		line(x2, py1-1, x2, py2-1, p.color_dark)
 
 		local col = p.color_main
-		-- Print green as white
+		-- Print green player as white
 		if (col == 11) col = 7
 
 		if p.enabled then
@@ -709,6 +696,10 @@ function draw_title_screen()
 			print('➡️', 64 + 20 - 4, py1, 7)
 		end
 
+	end
+
+	if num_players > 0 and (time() % 1.0) > 0.5 then
+		print_centered('press 🅾️', 64, 100, 7)
 	end
 
 	if (DEBUG) print(round(stat(1) * 100), 116, 1, 8)
@@ -808,7 +799,7 @@ function cpu_get_target()
 	-- Determine a few flags that will be used later
 	local easy_shot, wrong_side, target_angle_deg = cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
 	local clear_shot = nearest_ball_distance(player_ball) > AI_CLEAR_SHOT_MIN_BALL_DISTANCE
-	local target_blocked = wicket_between(player_ball, tx, ty) and not (abs(dx) < 3 and abs(dy) < 4)
+	local target_blocked = wicket_between(player_ball, tx, ty, 0) and not (abs(dx) < 3 and abs(dy) < 4)
 
 	-- Positive = ahead, negative = behind
 	local lead_point_gap = calculate_lead_point_gap()
@@ -846,10 +837,10 @@ function cpu_get_target()
 	-- easy_shot is probably redundant here
 	if (easy_shot or dy < 6 or target_angle_deg < 15) and not (wrong_side or next_wicket.pole) then
 
-		local next_wicket = WICKETS[player.last_wicket_idx + 2]
-		assert(next_wicket)
+		local next_wicket_after = WICKETS[player.last_wicket_idx + 2]
+		assert(next_wicket_after)
 
-		local tx_next, ty_next = next_wicket[1], next_wicket[2]
+		local tx_next, ty_next = next_wicket_after[1], next_wicket_after[2]
 
 		local distance_off_from_current_target = distance_to_line_segment(
 			tx, ty, player_ball.x, player_ball.y, tx_next, ty_next) or 32767
@@ -960,7 +951,7 @@ function cpu_get_target()
 				end
 
 				-- Update target_blocked for new target
-				target_blocked = wicket_between(player_ball, tx, ty)
+				target_blocked = wicket_between(player_ball, tx, ty, 0)
 
 				-- If target isn't blocked, then we're fine with this position
 				if (not target_blocked) break
@@ -1054,7 +1045,7 @@ function cpu_get_target()
 		wrong_side=wrong_side,
 		target_blocked=target_blocked,
 		clear_shot=clear_shot,
-		targeting_ball=targeting_ball,
+		targeting_ball=target_ball,
 		lead_point_gap=lead_point_gap,
 		play_safe_chance=play_safe_chance,
 		next_wicket_score=next_wicket_score,
@@ -1078,8 +1069,8 @@ function cpu_adjust_target_for_ball(tx, ty, target_ball, r)
 	return tx_new, ty_new
 end
 
+-- Returns easy_shot, wrong_side, target_angle_deg
 function cpu_check_next_wicket_flags(next_wicket, dx, dy, d)
-	-- Returns easy_shot, wrong_side, target_angle_deg
 
 	if (next_wicket.pole) return (d < 16), false, 0
 
@@ -1100,28 +1091,21 @@ end
 
 function cpu_shift_y_away_from_center_of_wicket(dy)
 
-	if dy > 16 then
-		return 2
-	elseif dy < -16 then
-		return -2
-	elseif dy > 4 then
-		return 1
-	elseif dy < -4 then
-		return -1
-	end
+	if (dy > 16) return 2
+	if (dy < -16) return -2
+	if (dy > 4) return 1
+	if (dy < -4) return -1
 
 	return 0
 end
 
 function nearest_ball_distance(ball, x, y)
 	x, y = x or ball.x, y or ball.y
-	local d2 = 32767
+	local d = 32767
 	for other_ball in all(balls) do
-		if other_ball != ball then
-			d2 = min(d2, distance_squared(x - other_ball.x, y - other_ball.y))
-		end
+		if (other_ball != ball) d = min(d, distance(x - other_ball.x, y - other_ball.y))
 	end
-	return sqrt(d2)
+	return d
 end
 
 function calculate_lead_point_gap()
@@ -1138,14 +1122,14 @@ function calculate_lead_point_gap()
 	return players[player_idx].last_wicket_idx - max_other_player_wicket
 end
 
+-- (px, py): point
+-- (x1, x2) & (x2, y2): line segment ends
+-- d_min & d_max: optional extra length to subtract from each end of line segment
 function distance_to_line_segment(
 		px, py,
 		x1, y1,
 		x2, y2,
 		d_min, d_max)
-	-- (px, py): point
-	-- (x1, x2) & (x2, y2): line segment ends
-	-- d_min & d_max: optional extra length to subtract from each end of line segment
 
 	local line_dx, line_dy = x2 - x1, y2 - y1
 
@@ -1177,8 +1161,7 @@ function distance_to_line_segment(
 	return distance(px - proj_x, py - proj_y)
 end
 
-
-function wicket_between(ball, tx, ty, target_is_ball, margin)
+function wicket_between(ball, tx, ty, margin)
 	for wicket in all(WICKET_COLLISION_POINTS) do
 		-- Hidden wickets would be redundant
 		-- TODO optimization: instead, maintain separate list of non-hidden wickets and just iterate that
@@ -1187,7 +1170,7 @@ function wicket_between(ball, tx, ty, target_is_ball, margin)
 				wicket.x, wicket.y,
 				ball.x, ball.y,
 				tx, ty) or 32767
-			if (d_between < BALL_POLE_D + (margin or 0)) return true
+			if (d_between < BALL_POLE_D + margin) return true
 		end
 	end
 	return false
@@ -1207,7 +1190,7 @@ function ball_between(ball, tx, ty, margin)
 				other_ball.x, other_ball.y,
 				BALL_R, nil) or 32767
 
-			if (d_between < BALL_POLE_D + (margin or 0)) then
+			if (d_between < BALL_POLE_D + margin) then
 				local other_ball_d2 = distance_squared(other_ball.x - ball.x, other_ball.y - ball.y)
 				if (other_ball_d2 < closest_ball_d2) closest_ball, closest_ball_d2 = other_ball, other_ball_d2
 			end
@@ -1244,7 +1227,7 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 	-- Figure out best ball to target for bonus shot
 	local target_ball
 	for b in all(balls) do
-		if b != player_ball and not wicket_between(player_ball, b.x, b.y, true, 1.5) then
+		if b != player_ball and not wicket_between(player_ball, b.x, b.y, 1.5) then
 
 			local d_ball_self = distance(b.x - player_ball.x, b.y - player_ball.y)
 
@@ -1278,11 +1261,8 @@ end
 
 function cpu_determine_target_power_angle(player_ball, tx, ty, target_ball)
 
-	dx, dy = tx - player_ball.x, ty - player_ball.y
-	local target_angle = atan2(dx, dy)
-
-	local d = distance(dx, dy)
-
+	local dx, dy = tx - player_ball.x, ty - player_ball.y
+	local d, target_angle = distance(dx, dy), atan2(dx, dy)
 	local target_power = sqrt(d) / 14
 
 	-- If we're targeting a nearby ball, increase power
@@ -1292,6 +1272,7 @@ function cpu_determine_target_power_angle(player_ball, tx, ty, target_ball)
 		if (d < 16) target_power *= 1.333333333
 	end
 
+	-- Minimum power is 1/64, maximum is 63/64
 	return clip_num(target_power, SHOT_POWER_METER_RATE, 1-SHOT_POWER_METER_RATE), target_angle
 end
 
@@ -1491,7 +1472,7 @@ function check_wickets(player)
 
 	assert(not player.finish_position)
 
-	local x, y, xp, yp, wx, wy = ball.x, ball.y, ball.x_prev, ball.y_prev, w[1], w[2]
+	local x, y, xp, wx, wy = ball.x, ball.y, ball.x_prev, w[1], w[2]
 
 	local through = false
 	if wy - 5 <= y and y <= wy + 4 then
@@ -1545,7 +1526,6 @@ function launch_ball()
 
 	player.total_shots += 1
 
-	-- Play sound
 	sfx(clip_num(flr(shot_power * 4), 0, 3))
 	sfx(clip_num(7 + flr(shot_power * 4), 7, 10))
 
@@ -1589,12 +1569,12 @@ function do_update()
 
 				local update_cpu_target = false
 
-				if (key == '6') player.last_wicket_idx = #WICKETS - 1
+				-- if (key == '6') player.last_wicket_idx = #WICKETS - 1
 
-				if (key == '7') player.bonus_shots, update_cpu_target = nil, true
-				if (key == '8') player.bonus_shots, update_cpu_target = 0, true
-				if (key == '9') player.bonus_shots, update_cpu_target = 1, true
-				if (key == '0') player.bonus_shots, update_cpu_target = 2, true
+				-- if (key == '7') player.bonus_shots, update_cpu_target = nil, true
+				-- if (key == '8') player.bonus_shots, update_cpu_target = 0, true
+				-- if (key == '9') player.bonus_shots, update_cpu_target = 1, true
+				-- if (key == '0') player.bonus_shots, update_cpu_target = 2, true
 
 				if key == 'i' then
 					if debug_force_safe_rand == 0 then
@@ -1770,12 +1750,11 @@ function do_update()
 							ball.vx, ball.vy = 0, 0
 
 							-- Move ball slightly when it stops
-							-- TODO: Add ball spin, and make this depend on it
 							if not any_collisions_for_ball(ball) then
 								local x1, y1 = ball.x, ball.y
 								ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
 								ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-								local x2, y2 = ball.x, ball.y
+								local x2 = ball.x
 								resolve_all_static_collisions_for_ball(ball)
 								-- If static collisions caused significant movement, forget about the stop movement entirely
 								if distance_squared(ball.x - x2, ball.y - y1) > 1 then
@@ -1788,8 +1767,8 @@ function do_update()
 				end
 			end
 
-			for player in all(players) do
-				check_wickets(player)
+			for p in all(players) do
+				check_wickets(p)
 			end
 
 			if moving_cooldown <= 0 then
@@ -1831,7 +1810,6 @@ end
 function update_select_starting_point()
 	local player = players[player_idx]
 	local player_ball = player.ball
-	local left, right, up, down
 
 	assert(player_ball)
 
@@ -1874,10 +1852,7 @@ function draw_shot()
 	local player = players[player_idx]
 	assert(player.ball)
 	local x, y = player.ball.x, player.ball.y
-	if (not x) return -- HACK: this shouldn't be needed
 	local dx, dy = cos(shot_angle), sin(shot_angle)
-
-	-- Draw line
 
 	local l = 24
 	if (debug_increase_shot_pointer_length) l = 256
@@ -1890,7 +1865,6 @@ function draw_club()
 	local player = players[player_idx]
 	assert(player.ball)
 	local x, y = player.ball.x, player.ball.y
-	if (not x) return -- HACK: this shouldn't be needed
 	local dx, dy = cos(shot_angle), sin(shot_angle)
 	local w, l, d = 1.5, 10, 4 + 5*shot_power
 
@@ -1908,22 +1882,24 @@ function draw_club()
 
 	if (dy > 0) c = { c[3], c[4], c[1], c[2] }
 
+	local c1x, c1y, c2x, c2y, c3x, c3y, c4x, c4y = c[1][1], c[1][2], c[2][1], c[2][2], c[3][1], c[3][2], c[4][1], c[4][2]
+
 	-- Fill
-	pelogen_tri_low(c[1][1], c[1][2], c[2][1], c[2][2], c[3][1], c[3][2], 4)
-	pelogen_tri_low(c[3][1], c[3][2], c[4][1], c[4][2], c[1][1], c[1][2], 4)
+	pelogen_tri_low(c1x, c1y, c2x, c2y, c3x, c3y, 4)
+	pelogen_tri_low(c3x, c3y, c4x, c4y, c1x, c1y, 4)
 
 	-- Sides - (pelogen_tri_low seems to have different rounding behavior, so these aren't necessarily covered)
-	line(c[1][1], c[1][2], c[2][1], c[2][2], 4)
-	line(c[3][1], c[3][2], c[4][1], c[4][2], 2)
+	line(c1x, c1y, c2x, c2y, 4)
+	line(c3x, c3y, c4x, c4y, 2)
 
 	-- Ends
-	line_round(c[1][1], c[1][2], c[4][1], c[4][2], 5)
-	line_round(c[2][1], c[2][2], c[3][1], c[3][2], 5)
+	line_round(c1x, c1y, c4x, c4y, 5)
+	line_round(c2x, c2y, c3x, c3y, 5)
 
 	-- Stripes in player color
 	for i in all({1, 4}) do
-		local x1, y1 = lerp_round(c[1][1], c[2][1], i/5), lerp_round(c[1][2], c[2][2], i/5)
-		local x2, y2 = lerp_round(c[4][1], c[3][1], i/5), lerp_round(c[4][2], c[3][2], i/5)
+		local x1, y1 = lerp_round(c1x, c2x, i/5), lerp_round(c1y, c2y, i/5)
+		local x2, y2 = lerp_round(c4x, c3x, i/5), lerp_round(c4y, c3y, i/5)
 		line(x1, y1, x2, y2, player.color_main)
 		pset(x1, y1, player.color_light)
 		pset(x2, y2, player.color_dark)
@@ -1941,13 +1917,8 @@ function draw_status_bar()
 	pset(STATUS_BAR_WIDTH, 0, 4)
 
 	for idx = 1,#players do
-		local p = players[idx]
-
-		local main_color, textcol = p.color_main, 7
+		local p, y1, textcol = players[idx], 9*idx + 1, 7
 		if (p.color_main >= 9) textcol = 0
-
-		local y1 = 9*idx + 1
-		local y2 = y1 + 6
 
 		palt()
 		pal(p.palette)
@@ -1989,8 +1960,8 @@ function draw_status_bar()
 		end
 	end
 
+	-- Shot power meter
 	if shot_power > 0 or shot_power_change != 0 then
-		-- Shot power meter
 		local col = shot_power_color()
 		local x_offset = -((over_power_screen_shake \ OVER_POWER_SCREEN_SHAKE_DIV) % 2)
 		local y = 125 - 60*shot_power
@@ -1999,6 +1970,7 @@ function draw_status_bar()
 		print('◀', STATUS_BAR_WIDTH - 1 + x_offset, y-2, col)
 	end
 
+	-- Grass in corner
 	if not debug_draw_primitives then
 		palt()
 		spr(54, 0, 124, 2, 1)
@@ -2026,10 +1998,7 @@ function _draw()
 
 	camera(round(camera_x - 64), round(camera_y - 64))
 
-	--
-	-- Field
-	--
-
+	-- Grass
 	for y=0,ceil((HEIGHT-2*ROUGH)/16) do
 		for x=0,ceil((WIDTH-2*ROUGH)/16) do
 			local fp = 0b0101101001011010
@@ -2053,10 +2022,6 @@ function _draw()
 	-- Boundary
 	if (ROUGH < 1) rect(0, 0, WIDTH - 1, HEIGHT - 1, 7)
 
-	--
-	-- Bases & shadows
-	--
-
 	-- Draw ball shadows
 	if not debug_draw_primitives then
 		for ball in all(balls) do
@@ -2077,8 +2042,7 @@ function _draw()
 		end
 	end	
 
-	-- Draw arrow on next wicket
-
+	-- Draw arrow under next wicket
 	if next_wicket then
 		x, y = next_wicket[1], next_wicket[2] - 3
 		if next_wicket.pole then
@@ -2090,21 +2054,23 @@ function _draw()
 		spr(3, x, y, 1, 1, next_wicket.reverse)
 	end
 
-	--
-	-- Starting point area
-	--
-
+	-- Starting point area, or shot line
 	if not player.selected_starting_point then
-		local x, y = player_ball.x - 3, player_ball.y - 3
+		x, y = player_ball.x - 3, player_ball.y - 3
 		spr(5, x, y - 12)
 		spr(5, x, y + 12, 1, 1, false, true)
 	elseif moving_cooldown <= 0 then
 		draw_shot()
 	end
 
-	--
-	-- Balls & wickets - stuff where Z-order matters
-	--
+	--[[
+	Balls & wickets - stuff where Z-order matters
+
+	TODO optimizations: (Bubblesort is slow, O(n^2))
+	- Do not add offscreen sprites to list
+	- Sort list of wickets at init, then they're already sorted
+	- Sort list each time we add a sprite
+	]]
 
 	for ball in all(balls) do
 		x, y = round(ball.x), round(ball.y)
@@ -2120,7 +2086,7 @@ function _draw()
 	end
 	reset_palette()
 
-	if (not debug_no_draw_tops) and (not debug_draw_primitives) then
+	if not (debug_no_draw_tops or debug_draw_primitives) then
 		for w in all(WICKETS) do
 			if not w.hidden then
 				if w.pole then
@@ -2134,17 +2100,6 @@ function _draw()
 		end
 	end
 
-	--
-	-- Draw sprites, in Z order
-	--
-
-	--[[
-	TODO optimizations: (Bubblesort is slow, O(n^2))
-	- Do not add offscreen sprites to list
-	- Sort list of wickets at init, then they're already sorted
-	- Sort list each time we add a sprite
-	]]
-
 	sort_z(sprites)
 
 	for s in all(sprites) do
@@ -2153,6 +2108,7 @@ function _draw()
 		if (s.pal) reset_palette()
 	end
 
+	-- CPU target
 	if DEBUG and player.cpu_target then
 		line(
 			player.cpu_target.x_orig - 2, player.cpu_target.y_orig,
@@ -2173,32 +2129,33 @@ function _draw()
 			14)
 	end
 
+	-- Debug primitives
 	if debug_draw_primitives then
 
-		-- Velocity
 		for ball in all(balls) do
-			line_round(
-				ball.x,
-				ball.y,
-				ball.x + 30*ball.vx,
-				ball.y + 30*ball.vy,
-				11)
-		end
+			local x, y = ball.x, ball.y
 
-		-- Current collisions
-		for ball in all(balls) do
+			-- Velocity
+			line_round(
+				x,
+				y,
+				x + 30*ball.vx,
+				y + 30*ball.vy,
+				11)
+
+			-- Current collisions
 			for coll in all(ball.collisions) do
 
 				-- Normal: orange
-				if (coll.nx) line_round(ball.x, ball.y, ball.x + 16*coll.nx, ball.y + 16*coll.ny, 9)
+				if (coll.nx) line_round(x, y, x + 16*coll.nx, y + 16*coll.ny, 9)
 
 				-- v before: blue
-				if (coll.vx_before) line_round(ball.x, ball.y, ball.x - 30 * coll.vx_before, ball.y - 30*coll.vy_before, 12)
+				if (coll.vx_before) line_round(x, y, x - 30 * coll.vx_before, y - 30*coll.vy_before, 12)
 
 				-- v after: red
-				if (coll.vx_after) line_round(ball.x, ball.y, ball.x + 30 * coll.vx_after, ball.y + 30*coll.vy_after, 8)
+				if (coll.vx_after) line_round(x, y, x + 30 * coll.vx_after, y + 30*coll.vy_after, 8)
 
-				line_round(ball.x, ball.y, coll.x, coll.y, 14)
+				line_round(x, y, coll.x, coll.y, 14)
 			end
 		end
 
@@ -2211,23 +2168,15 @@ function _draw()
 		end
 	end
 
-	--
 	-- Club
-	--
-
 	if (player.selected_starting_point and moving_cooldown <= 0) draw_club()
 
-	--
 	-- HUD
-	--
-
 	camera()
 	draw_status_bar()
 
-	--
-	-- Debug overlays
-	--
-
+	-- Debug text overlays
+	-- (Many of these are commented out to save tokens)
 	if DEBUG then
 
 		if debug_pause_physics then
@@ -2291,19 +2240,16 @@ function _draw()
 				if (player.cpu_target.next_wicket_score) print(player.cpu_target.next_wicket_score)
 
 				-- for ball in all(balls) do
-				for player in all(players) do
-					color(player.color_main)
-					local b = player.ball
+				for p in all(players) do
+					color(p.color_main)
+					local b = p.ball
 					if (b and b.cpu_target_score) print(b.cpu_target_score)
 				end
 			end
 		end
 	end
 
-	--
-	-- Set display palette
-	--
-
+	-- Set display palette at very end
 	pal(DISPLAY_PALETTE, 1)
 end
 
