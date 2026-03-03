@@ -8,7 +8,7 @@ __lua__
 -- Game core consts
 --
 
-DEBUG = true
+DEBUG = false
 
 BALL_R = 2.25
 BALL_D = 2 * BALL_R
