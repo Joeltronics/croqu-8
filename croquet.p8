@@ -261,6 +261,7 @@ end
 
 function sort_z(items)
 	-- Bubblesort items by z value, or y value if z is not found
+	-- FIXME: This bubblesort is wrong (seems to not have any problem though?)
 	for idx1 = 1,#items do
 		local any_swapped = false
 		for idx2 = 1,#items-1 do
@@ -1446,7 +1447,6 @@ function add_wicket_collision_points(idx, wicket)
 end
 
 function _init()
-	reset()
 	players, balls, WICKET_COLLISION_POINTS, num_players_finished, player_idx, game_started, game_finished = {}, {}, {}, 0, 1, false, false
 
 	-- Add hidden wickets first
@@ -1575,8 +1575,7 @@ function do_update()
 	local player_ball, left, right, up, down, op, x = player.ball, btn(0), btn(1), btn(2), btn(3), btnp(4), btn(5)
 
 	if game_finished then
-		-- TODO: I think we can just call run() instead?
-		if (op) _init()
+		if (op) run()
 		return
 	end
 
