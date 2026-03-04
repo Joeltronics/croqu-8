@@ -981,7 +981,7 @@ function cpu_get_target(player)
 		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked, difficulty)
 
 		if target_ball then
-			tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 0.5)
+			tx, ty = cpu_adjust_target_for_ball(player_ball, tx, ty, target_ball, 0.5)
 		end
 	end
 
@@ -997,7 +997,7 @@ function cpu_get_target(player)
 	if target_ball_between then
 		target_ball = target_ball_between
 		-- We want to move ball out of the way, so target further away from ball center than other case, and hit harder
-		tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 1)
+		tx, ty = cpu_adjust_target_for_ball(player_ball, tx, ty, target_ball, 1)
 	end
 
 	--
@@ -1059,18 +1059,20 @@ function cpu_get_target(player)
 	}
 end
 
-function cpu_adjust_target_for_ball(tx, ty, target_ball, r)
-
-	-- Don't target ball head-on - adjust angle a smidge toward previous tx/ty
+function cpu_adjust_target_for_ball(player_ball, tx, ty, target_ball, r)
 
 	local tx_new, ty_new = target_ball.x, target_ball.y
 
-	local dx, dy = tx - target_ball.x, ty - target_ball.y
-	local d = distance(dx, dy)
-	if d then
-		local scale = r * BALL_R / d
-		tx_new += dx * scale
-		ty_new += dy * scale
+	-- If the ball is reasonably close, then don't target it head-on - adjust angle a smidge toward previous tx/ty
+	-- If it's quite far away, then skip this because we don't want to miss!
+	if distance(target_ball.x - player_ball.x, target_ball.y - player_ball.y) <= 64 then
+		local dx, dy = tx - target_ball.x, ty - target_ball.y
+		local d = distance(dx, dy)
+		if d then
+			local scale = r * BALL_R / d
+			tx_new += dx * scale
+			ty_new += dy * scale
+		end
 	end
 
 	return tx_new, ty_new
