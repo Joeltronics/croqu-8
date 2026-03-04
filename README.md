@@ -33,18 +33,11 @@ Includes some code by others (all CC4-BY-NC-SA):
 
 End screen music?
 
-Better title screen logo
-
 High (low) scores?
 
 Possibly some performance or token count optimizations (although so far, neither seems necessary)
 
-AI improvements:
-
-- Maybe add difficulty options?
-
 "Maybe later" features:
 
-- Different CPU difficulty settings
 - Teams (pairs) mode
 - Optional "Garden Croquet" layout & rules (the current is "Lawn Croquet")

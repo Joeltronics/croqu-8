@@ -10,7 +10,7 @@ __lua__
 -- Game core consts
 --
 
-DEBUG = false
+DEBUG = true
 
 -- Hide title screen components for capturing label image
 CAPTURE_LABEL_IMAGE = false
@@ -31,6 +31,8 @@ SHOT_POWER_ERR_OVER = 20/360
 ANGLE_STEP = 1/256
 
 SQRT_MAX = sqrt(32767) - 0.001
+
+DIFFICULTY_LABELS = {'player', 'easy', 'medium', 'hard', 'pro'}
 
 --
 -- Field dimensions & wicket locations
@@ -557,33 +559,28 @@ function update_title_screen()
 
 	local player = players[player_idx]
 
-	if btnp(0) then
-		-- Left
-		if not player.enabled then
-			player.enabled = true
-			player.cpu = true
-		elseif player.cpu then
-			player.cpu = false
+	local incr = 0
+	if (btnp(0)) incr -= 1
+	if (btnp(1)) incr += 1
+
+	if incr != 0 then
+		if player.enabled then
+			player.cpu_difficulty += incr
+			if (player.cpu_difficulty < 0 or player.cpu_difficulty > 4) player.enabled = false
 		else
-			player.enabled = false
-		end
-	end
-	if btnp(1) then
-		-- Right
-		if not player.enabled then
+			if incr > 0 then
+				player.cpu_difficulty = 0
+			else
+				player.cpu_difficulty = 4
+			end
 			player.enabled = true
-			player.cpu = false
-		elseif player.cpu then
-			player.enabled = false
-			player.cpu = false
-		else
-			player.cpu = true
 		end
 	end
 
 	num_players = 0
 	for p in all(players) do
 		if (p.enabled) num_players += 1
+		p.cpu = p.enabled and p.cpu_difficulty > 0
 	end
 
 	if btnp(2) then
@@ -680,20 +677,16 @@ function draw_title_screen()
 		line(x1, py1-1, x1, py2-1, p.color_light)
 		line(x2, py1-1, x2, py2-1, p.color_dark)
 
-		local col = p.color_main
-		-- Print green player as white
-		if (col == 11) col = 7
-
 		if not CAPTURE_LABEL_IMAGE then
-			if p.enabled then
-				if p.cpu then
-					print_centered('cpu', 64, py1, col)
-				else
-					print_centered('player', 64, py1, col)
-				end
-			else
-				print_centered('off', 64, py1, 6)
-			end
+
+			local col = p.color_main
+			-- Print green player as white
+			if (col == 11) col = 7
+
+			local label = DIFFICULTY_LABELS[p.cpu_difficulty+1]
+			if (not p.enabled) label, col = 'off', 6
+
+			print('\^odff' .. label, 64 - 2*#label, py1, col)
 
 			if idx == player_idx then
 				print('⬅️', 64 - 20 - 4, py1, 7)
@@ -765,11 +758,10 @@ function draw_game_finished()
 			print(i, 40, y, 7)
 		end
 
-		if player.cpu then
-			print_centered('cpu', 64, y, player.color_main)
-		else
-			print_centered('player', 64, y, player.color_main)
-		end
+		local col = player.color_main
+		-- Print green player as white
+		if (col == 11) col = 7
+		print_centered(DIFFICULTY_LABELS[player.cpu_difficulty+1], 64, y, col)
 
 		print_centered(player.total_turns, 88, y, 7)
 		print_centered(player.total_shots, 112, y, 7)
@@ -786,9 +778,8 @@ end
 -- CPU AI logic
 --
 
-function cpu_get_target()
-	local player = players[player_idx]
-	local player_ball, next_wicket = player.ball, WICKETS[player.last_wicket_idx + 1]
+function cpu_get_target(player)
+	local player_ball, next_wicket, difficulty = player.ball, WICKETS[player.last_wicket_idx + 1], player.cpu_difficulty
 
 	for ball in all(balls) do
 		ball.cpu_target_score = nil
@@ -807,7 +798,7 @@ function cpu_get_target()
 
 	-- Positive = ahead, negative = behind
 	local lead_point_gap = calculate_lead_point_gap()
-	-- Increase effective score for each 2 shots
+	-- Increase our effective score for each 2 shots
 	lead_point_gap += shots \ 2
 
 	-- With no other balls in the way, this CPU player is too good - it can win before another player has a chance
@@ -826,6 +817,8 @@ function cpu_get_target()
 		if (clear_shot) slop += 1
 	end
 
+	if (difficulty <= 2) slop += 1
+
 	--[[
 	First determine ideal target point, without accounting for other balls
 
@@ -837,9 +830,9 @@ function cpu_get_target()
 
 	-- First, see if we're lined up in a way that can score 2 wickets at once, if so use next wicket as target
 	-- TODO: also try for 2 wickets + pole in some cases
-	
+
 	-- easy_shot is probably redundant here
-	if (easy_shot or dy < 6 or target_angle_deg < 15) and not (wrong_side or next_wicket.pole) then
+	if difficulty > 1 and (easy_shot or dy < 6 or target_angle_deg < 15) and not (wrong_side or next_wicket.pole) then
 
 		local next_wicket_after = WICKETS[player.last_wicket_idx + 2]
 		assert(next_wicket_after)
@@ -849,7 +842,6 @@ function cpu_get_target()
 		local distance_off_from_current_target = distance_to_line_segment(
 			tx, ty, player_ball.x, player_ball.y, tx_next, ty_next) or 32767
 
-		-- if distance_off_from_current_target < 3 and not wicket_between(player_ball, tx_next, ty_next, 1) then
 		if distance_off_from_current_target < 4 and not wicket_between(player_ball, tx_next, ty_next, 1) then
 			tx, ty = tx_next, ty_next
 			dx, dy = tx - player_ball.x, ty - player_ball.y
@@ -865,12 +857,11 @@ function cpu_get_target()
 		-- Easy shot, or targeting a pole; no point trying any of the play-safe logic
 		target_distance_past = AI_TARGET_PAST_WICKET_POLE_DISTANCE
 
-	elseif target_angle_deg >= 120 then
-		-- Wrong side of wicket (by a lot), keep targeting center of wicket
+	elseif target_angle_deg < 120 then
+		-- If wrong side of wicket (by a lot), keep targeting center of wicket; otherwise:
 
-	else
-		-- Determine odds of playing it safe (targeting in
-		-- front of wicket instead of trying to go through)
+		-- Determine odds of playing it safe (targeting in front of wicket instead of trying to go through)
+		-- TODO: would be good to refactor this into a function, but we're right at the token limit
 
 		if target_blocked or (player.bonus_shots or 0) >= 2 then
 			-- If target blocked, always play safe
@@ -938,6 +929,8 @@ function cpu_get_target()
 			end
 		end
 
+		if (difficulty <= 1) play_safe_chance *= 2
+
 		-- If play_safe_chance < 10% or > 90%, snap to 0 or 1
 		local r = debug_force_safe_rand or rnd()
 		if (play_safe_chance > 0.9) or (play_safe_chance >= 0.1 and play_safe_chance >= r) then
@@ -985,7 +978,7 @@ function cpu_get_target()
 		-- No bonus shots yet, so target another ball to get them
 		-- Or target is blocked, so target another ball because it's likely the only option
 
-		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
+		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked, difficulty)
 
 		if target_ball then
 			tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 0.5)
@@ -998,10 +991,12 @@ function cpu_get_target()
 	local other_ball_margin = 2
 	if (d <= 16) other_ball_margin = 0
 
+	local target_distance_past_ball = AI_TARGET_PAST_BALL_DISTANCE
+
 	local target_ball_between = ball_between(player_ball, tx, ty, other_ball_margin)
 	if target_ball_between then
 		target_ball = target_ball_between
-		-- We want to move ball out of the way, so target further away from ball center than other case
+		-- We want to move ball out of the way, so target further away from ball center than other case, and hit harder
 		tx, ty = cpu_adjust_target_for_ball(tx, ty, target_ball, 1)
 	end
 
@@ -1011,7 +1006,12 @@ function cpu_get_target()
 
 	local tx_orig, ty_orig = tx, ty
 
-	if (target_ball) target_distance_past = AI_TARGET_PAST_BALL_DISTANCE
+	-- If there's a ball in between us and the intended target, hit it a bit harder to help clear it
+	-- Also, hardest AI always does this - not just to play mean (but that too),
+	-- but also because it's very accurate so it can get away with it
+	if (target_ball_between or difficulty >= 4) target_distance_past_ball *= 2
+
+	if (target_ball) target_distance_past = target_distance_past_ball
 
 	if target_distance_past > 0 then
 		tx, ty = cpu_target_past(player_ball, tx, ty, target_distance_past)
@@ -1028,6 +1028,8 @@ function cpu_get_target()
 	--
 
 	if (target_ball and lead_point_gap <= 0) slop -= 1
+
+	if (difficulty >= 4) slop = 0
 
 	target_power, target_angle = cpu_add_error(target_power, target_angle, slop)
 
@@ -1050,6 +1052,7 @@ function cpu_get_target()
 		target_blocked=target_blocked,
 		clear_shot=clear_shot,
 		targeting_ball=target_ball,
+		target_ball_between=target_ball_between,
 		lead_point_gap=lead_point_gap,
 		play_safe_chance=play_safe_chance,
 		next_wicket_score=next_wicket_score,
@@ -1204,12 +1207,15 @@ function ball_between(ball, tx, ty, margin)
 	return closest_ball
 end
 
-function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked)
+function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked, difficulty)
 
 	local tx, ty = next_wicket[1], next_wicket[2]
 	local d_self_target = distance(tx - player_ball.x, ty - player_ball.y)
 
 	if (d_self_target < 1) return nil, d_self_target
+
+	-- How much extra margin we need to not consider this ball blocked by a wicket
+	local wicket_margin = 1.5
 
 	-- Only target a ball if the score is less than this
 	local next_wicket_score = d_self_target
@@ -1221,17 +1227,21 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 		-- In one of these cases always go for closest ball, within a reasonable range
 		next_wicket_score = 128
 	elseif easy_shot then
-		-- May still want to target another ball just to move it - but only if it's not far out of the way
-		next_wicket_score = min(next_wicket_score, 24)
+		-- May still want to target another ball just to move it
+		-- But only if it's not far out of the way, and safe (extra wicket margin)
+		next_wicket_score, wicket_margin = min(next_wicket_score, 24), 2
 	end
 	next_wicket_score = min(next_wicket_score, 128)
 
-	local best_score = next_wicket_score
+	-- Less likely to target a ball at easier difficulties
+	local difficulty_scale_next_wicket_score = {0.5, 0.9, 1.0, 1.0}
+	next_wicket_score *= difficulty_scale_next_wicket_score[difficulty]
 
 	-- Figure out best ball to target for bonus shot
+	local best_score = next_wicket_score
 	local target_ball
 	for b in all(balls) do
-		if b != player_ball and not wicket_between(player_ball, b.x, b.y, 1.5) then
+		if b != player_ball and not wicket_between(player_ball, b.x, b.y, wicket_margin) then
 
 			local d_ball_self = distance(b.x - player_ball.x, b.y - player_ball.y)
 
@@ -1445,7 +1455,9 @@ function _init()
 		local palette = PALETTES[idx]
 		add(players, {
 			enabled=idx <= 4, -- Default to 4 players
-			cpu=idx > 1, -- Default to 1 human player
+			-- cpu_difficulty: 0 = player, 1 = easiest, 4 = hardest
+			-- Default to 1 human player, others are medium difficulty
+			cpu_difficulty=idx > 1 and 2 or 0,
 			palette=palette,
 			color_main=palette[8],
 			color_light=palette[14],
@@ -1630,7 +1642,7 @@ function do_update()
 					update_cpu_target = true
 				end
 
-				if (update_cpu_target and player.cpu) player.cpu_target = cpu_get_target()
+				if (update_cpu_target and player.cpu) player.cpu_target = cpu_get_target(player)
 			end
 		end
 	end
@@ -1651,7 +1663,7 @@ function do_update()
 
 			if moving_cooldown <= 0 and not debug_pause_physics then		
 
-				if (not player.cpu_target) player.cpu_target = cpu_get_target()
+				if (not player.cpu_target) player.cpu_target = cpu_get_target(player)
 
 				if shot_power_change == 0 then
 					local angle_err_step = ((shot_angle - player.cpu_target.angle + 0.5) % 1.0) - 0.5
@@ -2224,6 +2236,7 @@ function _draw()
 				if (player.cpu_target.wrong_side) print('wrong_side')
 				if (player.cpu_target.clear_shot) print('clear_shot')
 				if (player.cpu_target.targeting_ball) print('targeting_ball')
+				if (player.cpu_target.target_ball_between) print('tbb')
 
 				-- print('gap=' .. player.cpu_target.lead_point_gap)
 				print('slop=' .. player.cpu_target.slop)
