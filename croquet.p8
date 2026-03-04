@@ -1185,9 +1185,9 @@ function ball_between(ball, tx, ty, margin)
 	for other_ball in all(balls) do
 		if other_ball != ball then
 			local d_between = distance_to_line_segment(
-				tx, ty,
+				other_ball.x, other_ball.y,	
 				ball.x, ball.y,
-				other_ball.x, other_ball.y,
+				tx, ty,
 				BALL_R, nil) or 32767
 
 			if (d_between < BALL_POLE_D + margin) then
