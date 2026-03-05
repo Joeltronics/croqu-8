@@ -1174,7 +1174,8 @@ function wicket_between(ball, tx, ty, margin)
 	for wicket in all(WICKET_COLLISION_POINTS) do
 		-- Hidden wickets would be redundant
 		-- TODO optimization: instead, maintain separate list of non-hidden wickets and just iterate that
-		if not wicket.hidden then
+		-- Also, if this wicket is exactly the target (i.e. a pole), then skip it
+		if (not wicket.hidden) and (tx != wicket.x or ty != wicket.y or not wicket.pole) then
 			local d_between = distance_to_line_segment(
 				wicket.x, wicket.y,
 				ball.x, ball.y,
