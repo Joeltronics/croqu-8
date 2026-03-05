@@ -1757,8 +1757,8 @@ function do_update()
 				for ball in all(balls) do
 					if ball.vx != 0 or ball.vy != 0 then
 
-						local drag = DRAG
-						if (ball.x < ROUGH or ball.y < ROUGH or ball.x >= WIDTH-ROUGH or ball.y >= HEIGHT-ROUGH) drag = DRAG_ROUGH
+						local drag, x, y = DRAG, ball.x, ball.y
+						if (x < ROUGH or y < ROUGH or x >= WIDTH-ROUGH or y >= HEIGHT-ROUGH) drag = DRAG_ROUGH
 
 						ball.vx *= drag
 						ball.vy *= drag
@@ -1770,14 +1770,14 @@ function do_update()
 
 							-- Move ball slightly when it stops
 							if not any_collisions_for_ball(ball) then
-								local x1, y1 = ball.x, ball.y
-								ball.x = round(ball.x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-								ball.y = round(ball.y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
-								local x2 = ball.x
+								ball.x = round(x + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+								ball.y = round(y + rnd(2*BALL_STOP_RANDOM_MOVEMENT) - BALL_STOP_RANDOM_MOVEMENT)
+								local x2, y2 = ball.x, ball.y
 								resolve_all_static_collisions_for_ball(ball)
-								-- If static collisions caused significant movement, forget about the stop movement entirely
-								if distance_squared(ball.x - x2, ball.y - y1) > 1 then
-									ball.x, ball.y = x1, y1
+								-- If static collisions caused significant movement, forget about the stop movement
+								-- entirely - go back to original position
+								if distance_squared(ball.x - x2, ball.y - y2) > 1 then
+									ball.x, ball.y = x, y
 								end
 							end
 						end
