@@ -830,6 +830,7 @@ function cpu_get_target(player)
 
 	-- First, see if we're lined up in a way that can score 2 wickets at once, if so use next wicket as target
 	-- TODO: also try for 2 wickets + pole in some cases
+	local targeting_thru = false
 
 	-- easy_shot is probably redundant here
 	if difficulty > 1 and (easy_shot or dy < 6 or target_angle_deg < 15) and not (wrong_side or next_wicket.pole) then
@@ -842,11 +843,12 @@ function cpu_get_target(player)
 		local distance_off_from_current_target = distance_to_line_segment(
 			tx, ty, player_ball.x, player_ball.y, tx_next, ty_next) or 32767
 
-		if distance_off_from_current_target < 4 and not wicket_between(player_ball, tx_next, ty_next, 1) then
+		if distance_off_from_current_target < 4 and not wicket_between(player_ball, tx_next, ty_next, 0.25) then
 			tx, ty = tx_next, ty_next
 			dx, dy = tx - player_ball.x, ty - player_ball.y
 			d = distance(dx, dy)
 			easy_shot = false
+			targeting_thru = true
 			-- Note we intentionally don't reset any of the other flags, those should still refer to nearest
 		end
 	end
@@ -931,6 +933,11 @@ function cpu_get_target(player)
 
 		if (difficulty <= 1) play_safe_chance *= 2
 
+		if targeting_thru then
+			play_safe_chance *= 2
+			if (difficulty <= 2) play_safe_chance = 1
+		end
+
 		-- If play_safe_chance < 10% or > 90%, snap to 0 or 1
 		local r = debug_force_safe_rand or rnd()
 		if (play_safe_chance > 0.9) or (play_safe_chance >= 0.1 and play_safe_chance >= r) then
@@ -977,6 +984,9 @@ function cpu_get_target(player)
 	if target_blocked or not player.bonus_shots then
 		-- No bonus shots yet, so target another ball to get them
 		-- Or target is blocked, so target another ball because it's likely the only option
+
+		-- TODO: if targeting_thru, would be better to use the following wicket as the target here, not the current wicket
+		-- The tricky part is we need to make sure we don't miss the current wicket
 
 		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked, difficulty)
 
