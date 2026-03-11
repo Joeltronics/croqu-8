@@ -1951,8 +1951,8 @@ function draw_status_bar()
 			if p.finish_position <= 3 then
 				spr(48 + p.finish_position, x - 2, y1 - 1)
 			else
-				circfill(x + 1, y1 + 3, 3, 0)
-				print(p.finish_position, x, y1 + 1, 7)
+				rectfill(x-1, y1-1, x+3, y1+5)
+				print(p.finish_position, x, y1, 7)
 			end
 
 		elseif idx == player_idx then
