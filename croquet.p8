@@ -1083,6 +1083,9 @@ function cpu_adjust_target_for_ball(player_ball, tx, ty, target_ball, r)
 			tx_new += dx * scale
 			ty_new += dy * scale
 		end
+
+		-- Don't do this if it wasn't blocked before, but is now
+		if (wicket_between(player_ball, tx_new, ty_new, 0) and not wicket_between(player_ball, tx, ty, 0)) return tx, ty
 	end
 
 	return tx_new, ty_new
