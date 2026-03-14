@@ -173,7 +173,7 @@ debug_pause_physics = false
 debug_no_draw_tops = false
 debug_draw_primitives = false
 debug_increase_shot_pointer_length = false
-debug_force_safe_rand = nil
+-- debug_force_safe_rand = nil
 
 --
 -- Utility functions
@@ -830,7 +830,7 @@ function cpu_get_target(player)
 
 	-- First, see if we're lined up in a way that can score 2 wickets at once, if so use next wicket as target
 	-- TODO: also try for 2 wickets + pole in some cases
-	local targeting_thru = false
+	local targeting_thru
 
 	-- easy_shot is probably redundant here
 	if difficulty > 1 and (easy_shot or dy < 6 or target_angle_deg < 15) and not (wrong_side or next_wicket.pole) then
@@ -848,7 +848,7 @@ function cpu_get_target(player)
 			dx, dy = tx - player_ball.x, ty - player_ball.y
 			d = distance(dx, dy)
 			easy_shot = false
-			targeting_thru = true
+			targeting_thru = next_wicket_after
 			-- Note we intentionally don't reset any of the other flags, those should still refer to nearest
 		end
 	end
@@ -939,7 +939,8 @@ function cpu_get_target(player)
 		end
 
 		-- If play_safe_chance < 10% or > 90%, snap to 0 or 1
-		local r = debug_force_safe_rand or rnd()
+		-- local r = debug_force_safe_rand or rnd()
+		local r = rnd()
 		if (play_safe_chance > 0.9) or (play_safe_chance >= 0.1 and play_safe_chance >= r) then
 
 			-- Target in front of wicket
@@ -981,14 +982,14 @@ function cpu_get_target(player)
 
 	local target_ball, next_wicket_score
 
-	if target_blocked or not player.bonus_shots then
+	if target_blocked or targeting_thru or not player.bonus_shots then
 		-- No bonus shots yet, so target another ball to get them
 		-- Or target is blocked, so target another ball because it's likely the only option
 
-		-- TODO: if targeting_thru, would be better to use the following wicket as the target here, not the current wicket
-		-- The tricky part is we need to make sure we don't miss the current wicket
-
-		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked, difficulty)
+		-- TODO: if targeting_thru, would be better to use the following wicket as the target here, not the current wicket.
+		-- The tricky part is we need to make sure we don't miss the current wicket. Right now there is very basic logic
+		-- to try and target through in certain very specific cases.
+		target_ball, next_wicket_score = cpu_target_ball(player_ball, next_wicket, targeting_thru, wrong_side, easy_shot, target_blocked, difficulty)
 
 		if target_ball then
 			tx, ty = cpu_adjust_target_for_ball(player_ball, tx, ty, target_ball, 0.5)
@@ -1085,6 +1086,7 @@ function cpu_adjust_target_for_ball(player_ball, tx, ty, target_ball, r)
 		end
 
 		-- Don't do this if it wasn't blocked before, but is now
+		-- TODO: account for slop here?
 		if (wicket_between(player_ball, tx_new, ty_new, 0) and not wicket_between(player_ball, tx, ty, 0)) return tx, ty
 	end
 
@@ -1223,10 +1225,23 @@ function ball_between(ball, tx, ty, margin)
 	return closest_ball
 end
 
-function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target_blocked, difficulty)
+function is_safe_to_target_thru(player_ball, other_ball, next_wicket, wicket_targeting_thru)
+	if (not wicket_targeting_thru) return true
+	-- We want to make sure next_wicket is in between player_ball and other_ball
+	return distance_to_line_segment(
+		next_wicket[1], next_wicket[2],
+		player_ball.x, player_ball.y,
+		other_ball.x, other_ball.y) or 32767 < 4
+end
 
-	local tx, ty = next_wicket[1], next_wicket[2]
-	local d_self_target = distance(tx - player_ball.x, ty - player_ball.y)
+function cpu_target_ball(player_ball, next_wicket, wicket_targeting_thru, wrong_side, easy_shot, target_blocked, difficulty)
+
+	if (difficulty <= 2) wicket_targeting_thru = nil
+
+	local target = wicket_targeting_thru or next_wicket
+	local tx, ty = target[1], target[2]
+	local dx_self_target, dy_self_target = tx - player_ball.x, ty - player_ball.y
+	local d_self_target = distance(dx_self_target, dy_self_target)
 
 	if (d_self_target < 1) return nil, d_self_target
 
@@ -1257,9 +1272,10 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 	local best_score = next_wicket_score
 	local target_ball
 	for b in all(balls) do
-		if b != player_ball and not wicket_between(player_ball, b.x, b.y, wicket_margin) then
+		if b != player_ball and is_safe_to_target_thru(player_ball, b, next_wicket, wicket_targeting_thru) and not wicket_between(player_ball, b.x, b.y, wicket_margin) then
 
-			local d_ball_self = distance(b.x - player_ball.x, b.y - player_ball.y)
+			local dx_ball, dy_ball = b.x - player_ball.x, b.y - player_ball.y
+			local d_ball_self = distance(dx_ball, dy_ball)
 
 			local dx_target = b.x - tx
 			local d_ball_target = distance(dx_target, b.y - ty)
@@ -1271,8 +1287,9 @@ function cpu_target_ball(player_ball, next_wicket, wrong_side, easy_shot, target
 			score += min(d_ball_self, 2 * d_ball_target)
 			assert(score > 0)
 
-			-- Penalize if other ball is on wrong side of target (unless we're also on wrong side)
-			if not (next_wicket.pole or wrong_side) then
+			-- Penalize if other ball is on wrong side of target, unless we can shoot it through (or we're also on wrong side)
+			local can_shoot_through = abs(dy_self_target) < 5 and abs(dy_ball) < 10
+			if not (next_wicket.pole or wrong_side or can_shoot_through) then
 				if ((not next_wicket.reverse) and dx_target > 2) score *= 2
 				if (next_wicket.reverse and dx_target < -2) score *= 2
 			end
@@ -1608,22 +1625,22 @@ function do_update()
 				-- if (key == '9') player.bonus_shots, update_cpu_target = 1, true
 				-- if (key == '0') player.bonus_shots, update_cpu_target = 2, true
 
-				if key == 'i' then
-					if debug_force_safe_rand == 0 then
-						debug_force_safe_rand = nil
-					else
-						debug_force_safe_rand = 0
-					end
-					update_cpu_target = true
-				end
-				if key == 'o' then
-					if debug_force_safe_rand == 1 then
-						debug_force_safe_rand = nil
-					else
-						debug_force_safe_rand = 1
-					end
-					update_cpu_target = true
-				end
+				-- if key == 'i' then
+				-- 	if debug_force_safe_rand == 0 then
+				-- 		debug_force_safe_rand = nil
+				-- 	else
+				-- 		debug_force_safe_rand = 0
+				-- 	end
+				-- 	update_cpu_target = true
+				-- end
+				-- if key == 'o' then
+				-- 	if debug_force_safe_rand == 1 then
+				-- 		debug_force_safe_rand = nil
+				-- 	else
+				-- 		debug_force_safe_rand = 1
+				-- 	end
+				-- 	update_cpu_target = true
+				-- end
 
 				if key == '[' then
 					player.last_wicket_idx += 1
