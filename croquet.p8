@@ -10,7 +10,7 @@ __lua__
 -- Game core consts
 --
 
-DEBUG = true
+DEBUG = false
 
 -- Hide title screen components for capturing label image
 CAPTURE_LABEL_IMAGE = false
