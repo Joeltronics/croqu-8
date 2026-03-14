@@ -1281,24 +1281,26 @@ function cpu_target_ball(player_ball, next_wicket, wicket_targeting_thru, wrong_
 			local d_ball_target = distance(dx_target, b.y - ty)
 
 			local score = d_ball_self + d_ball_target
-			assert(score > 0) -- check overflow didn't happen
-			score -= d_self_target
-			assert(score > 0)
-			score += min(d_ball_self, 2 * d_ball_target)
-			assert(score > 0)
+			-- check for overflow
+			if score > 0 then
+				score -= d_self_target
+				assert(score > 0)
+				score += min(d_ball_self, 2 * d_ball_target)
+				assert(score > 0)
 
-			-- Penalize if other ball is on wrong side of target, unless we can shoot it through (or we're also on wrong side)
-			local can_shoot_through = abs(dy_self_target) < 5 and abs(dy_ball) < 10
-			if not (next_wicket.pole or wrong_side or can_shoot_through) then
-				if ((not next_wicket.reverse) and dx_target > 2) score *= 2
-				if (next_wicket.reverse and dx_target < -2) score *= 2
-			end
+				-- Penalize if other ball is on wrong side of target, unless we can shoot it through (or we're also on wrong side)
+				local can_shoot_through = abs(dy_self_target) < 5 and abs(dy_ball) < 10
+				if not (next_wicket.pole or wrong_side or can_shoot_through) then
+					if ((not next_wicket.reverse) and dx_target > 2) score *= 2
+					if (next_wicket.reverse and dx_target < -2) score *= 2
+				end
 
-			b.cpu_target_score = score
+				b.cpu_target_score = score
 
-			if score < best_score then
-				-- This is the best candidate so far
-				target_ball, best_score = b, score
+				if score < best_score then
+					-- This is the best candidate so far
+					target_ball, best_score = b, score
+				end
 			end
 		end
 	end
