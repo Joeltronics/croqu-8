@@ -2061,21 +2061,15 @@ function _draw()
 			if (x % 2 == 1 and y % 2 == 1) fp = 0xFFFF
 			fillp(fp)
 			local off = ROUGH
-			if (ROUGH < 1) off = -8
 			rectfill(x*16 + off, y*16 + off, x*16 + 16 + off, y*16 + 16 + off, 0xD3)
 		end
 	end
-	if ROUGH > 0 then
-		fillp(ROUGH_FILLP)
-		rectfill(0, 0, WIDTH, ROUGH-1, ROUGH_COLOR)
-		rectfill(0, HEIGHT - ROUGH, WIDTH, HEIGHT, ROUGH_COLOR)
-		rectfill(0, ROUGH, ROUGH, HEIGHT - ROUGH, ROUGH_COLOR)
-		rectfill(WIDTH - ROUGH, ROUGH, WIDTH, HEIGHT - ROUGH, ROUGH_COLOR)
-	end
+	fillp(ROUGH_FILLP)
+	rectfill(0, 0, WIDTH, ROUGH-1, ROUGH_COLOR)
+	rectfill(0, HEIGHT - ROUGH, WIDTH, HEIGHT, ROUGH_COLOR)
+	rectfill(0, ROUGH, ROUGH, HEIGHT - ROUGH, ROUGH_COLOR)
+	rectfill(WIDTH - ROUGH, ROUGH, WIDTH, HEIGHT - ROUGH, ROUGH_COLOR)
 	fillp()
-
-	-- Boundary
-	if (ROUGH < 1) rect(0, 0, WIDTH - 1, HEIGHT - 1, 7)
 
 	-- Draw ball shadows
 	if not debug_draw_primitives then
