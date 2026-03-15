@@ -812,39 +812,31 @@ function cpu_get_target(player)
 	local clear_shot = nearest_ball_distance(player_ball) > AI_CLEAR_SHOT_MIN_BALL_DISTANCE
 	local target_blocked = wicket_between(player_ball, tx, ty, 0) and not (abs(dx) < 3 and abs(dy) < 4)
 
-	-- Positive = ahead, negative = behind
-	local lead_point_gap = calculate_lead_point_gap()
-	-- Increase our effective score for each 2 shots
-	lead_point_gap += shots \ 2
+	-- Positive = ahead, negative = behind. Increase our effective score by 1 for every 2 shots
+	local lead_point_gap = calculate_lead_point_gap() + shots \ 2
 
 	-- With no other balls in the way, this CPU player is too good - it can win before another player has a chance
 	-- But it does much worse when other balls are involved
 	-- So add a bit of handicap when there are no other balls anywhere close
 	-- Also add this slop when way ahead of everyone
-	local slop = 0
-	if (num_players_finished >= num_players - 1) then
-		lead_point_gap = 0
-	else
-		-- 3-4: 1 / 5-6: 2 / 7-8: 3 / 9+: 4
-		if (lead_point_gap >= 3) slop += min(4, flr((lead_point_gap - 1) / 2))
-		if (lead_point_gap <= -2) slop -= 1
-		if (lead_point_gap <= -5) slop -= 1
+	-- There will be an extra modifier later once we know if we're targeting a ball
+	-- (But have to calculate the base first, because it may affect whether to target a ball)
+	local BASE_SLOP_WITH_DIFFICULTY = {1, 1, 0, -10}
+	local slop = BASE_SLOP_WITH_DIFFICULTY[difficulty]
+	if (clear_shot) slop += 1
+	if (lead_point_gap >= 7) slop += 1
+	if (lead_point_gap >= 5) slop += 1
+	if (lead_point_gap >= 3) slop += 1
+	if (lead_point_gap <= -2) slop -= 1
+	if (lead_point_gap <= -5) slop -= 1
 
-		if (clear_shot) slop += 1
-	end
+	-- Check if we're the last remaining player
+	if (num_players_finished >= num_players - 1) lead_point_gap, slop = 0, -10
 
-	if (difficulty <= 2) slop += 1
+	-- First determine ideal target point for next wicket, without accounting for other balls
+	-- This is probably slightly past it, or slightly in front of it
 
-	--[[
-	First determine ideal target point, without accounting for other balls
-
-	Target point might not be right under the wicket in some cases - might want to aim slightly in front
-
-	TODO:
-	- Also see if we can hit a ball that's beyond the next wicket
-	]]
-
-	-- First, see if we're lined up in a way that can score 2 wickets at once, if so use next wicket as target
+	-- First, see if we're lined up in a way that can score 2 wickets at once - if so, use next wicket as target
 	-- TODO: also try for 2 wickets + pole in some cases
 	local targeting_thru
 
@@ -897,6 +889,8 @@ function cpu_get_target(player)
 			-- 96: 1
 			local distance_factor = max(0, d - 32) / 64
 
+			if (difficulty <= 1) distance_factor *= 4
+
 			play_safe_chance = 2 * angle_factor * distance_factor
 
 			-- Slop factor - safer when shot will be less accurate
@@ -946,8 +940,6 @@ function cpu_get_target(player)
 				play_safe_chance *= 1 - 4 / max(8, target_nearest_ball_d)
 			end
 		end
-
-		if (difficulty <= 1) play_safe_chance *= 2
 
 		if targeting_thru then
 			play_safe_chance *= 2
@@ -1055,8 +1047,6 @@ function cpu_get_target(player)
 	--
 
 	if (target_ball and lead_point_gap <= 0) slop -= 1
-
-	if (difficulty >= 4) slop = 0
 
 	target_power, target_angle = cpu_add_error(target_power, target_angle, slop)
 
@@ -2290,17 +2280,7 @@ function _draw()
 				-- print('gap=' .. player.cpu_target.lead_point_gap)
 				print('slop=' .. player.cpu_target.slop)
 
-				-- if not player.cpu_target.play_safe_chance then
-				-- 	print('saf=nil')
-				-- elseif debug_force_safe_rand then
-				-- 	if debug_force_safe_rand >= 0.5 then
-				-- 		print('saf=false')
-				-- 	else
-				-- 		print('saf=true')
-				-- 	end
-				-- else
-				-- 	print('saf=' .. player.cpu_target.play_safe_chance)
-				-- end
+				if (player.cpu_target.play_safe_chance) print('saf=' .. player.cpu_target.play_safe_chance)
 
 				color(7)
 				if (player.cpu_target.next_wicket_score) print(player.cpu_target.next_wicket_score)

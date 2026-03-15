@@ -47,16 +47,15 @@ Initially there was only 1 difficulty. This later became "hard", and I added 2 e
 
 Difficulty affects a few things:
 
-* Slop factor
-  - At easy/medium, add 1
-  - At pro, slop is always 0
-* How likely the CPU is to try and target another ball (i.e. the base score needed for a ball vs wicket)
-  - Easy is quite a bit less likely
-  - Medium is slightly less likely
-* How likely the CPU is to play it safe and target in front of the next wicket
-  - Easy difficulty is twice as likely
-  - When shooting through a wicket to target the next one, easy & medium will always play it safe
-* Some of the logic for looking past the next wicket to target the one after is disabled at easier difficulties
-  - At easy, we don't try this at all
-  - At medium, we do but then don't try to target another ball through the wicket (unless a ball is blocking our path)
-* At pro, the CPU hits other balls extra hard
+* Easy & medium get +1 slop factor
+* How likely the CPU is to choose another ball as the target insted of the next wicket (i.e. the base score needed for it to choose a ball)
+  - Easy: quite a bit less likely
+  - Medium: slightly less likely
+* How likely the CPU is to play it safe and target in front of the next wicket rather than trying to go through
+  - Easy: distance factor is much higher (i.e. much more likely to play it safe for long shots)
+  - This logic is also affected by slop factor, so the higher base slop at easy & medium also makes these more likely to play it safe
+* Different logic for attempting to go past the next wicket and target the one after
+  - Easy: don't try this at all
+  - Medium: when going for this, don't try to target another ball through the wicket (unless it's directly blocking our path). And always choose the option to play it safe.
+
+The "pro" difficulty has the same core decision logic as "hard". The only differences are that it does not use slop at all, and it shoots extra hard when targeting other balls.
