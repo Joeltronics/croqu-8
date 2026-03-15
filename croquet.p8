@@ -230,29 +230,45 @@ function lerp_round(a, b, t)
 	return round(lerp(a, b, t))
 end
 
+-- Calculate distance, overflow-safe
+-- In case of overflow or near-overflow, returns 32767
 function distance(dx, dy)
-	-- Calculate distance, overflow-safe
-	-- Exact distance when close, approximate distance when further
 
-	dx = abs(dx)
-	dy = abs(dy)
+	--[[
+	Cases where this logic could still overflow:
+	- If dx or dy is exactly -32768, abs() isn't safe
+	- If scale is very large (more than ~23,000), then scale*sqrt would overflow
 
-	local d
+	However, playfield is 416x224, so this limits the max possible dx & dy we can actually see.
+	So neither of these cases is actually possible in practice.
 
-	if (dx > 127 or dy > 127) then
-		d = dx + dy
-	else
-		d = sqrt(dx*dx + dy*dy)
-	end
+	Largest input case:
+		dx, dy, scale = 416, 224, 4.16
+		scaled dx, dy = 100, 53.8
+		dx*dx + dy*dy = 10,107.7
+		sqrt = 100.537
+		scale * sqrt = 418.2
 
-	if (d < 0) d = 32767
+	Actual worst case:
+		dx, dy, scale = 224, 224, 2.24
+		scaled dx, dy = 100, 100
+		dx*dx + dy*dy = 20,000
+		sqrt = 141.4
+		scale * sqrt = 141.4
+	]]
 
-	return d
+	dx, dy = abs(dx), abs(dy)
+
+	-- Keep as much precision as possible (don't scale unless needed), and also protect against divide-by-zero
+	local scale = max(1, max(dx, dy) / 100)
+	dx /= scale
+	dy /= scale
+	return scale * sqrt(dx*dx + dy*dy)
 end
 
+-- Calculate distance squared, overflow-safe
+-- On overflow, returns 32767
 function distance_squared(dx, dy)
-	-- Calculate distance squared, overflow-safe
-	-- On overflow, returns 32767
 	dx, dy = abs(dx), abs(dy)
 
 	if (dx >= SQRT_MAX or dy >= SQRT_MAX) return 32767
@@ -457,7 +473,7 @@ function wicket_collisions()
 		if ball then
 			for w in all(WICKET_COLLISION_POINTS) do
 
-				local dx, dy, d2 = ball.x - w.x, ball.y - w.y
+				local dx, dy = ball.x - w.x, ball.y - w.y
 
 				if dx == 0 and dy == 0 then
 					-- Ball is on exactly the same spot, would get divide by zero
@@ -465,7 +481,7 @@ function wicket_collisions()
 					dy = ball.y - w.y
 				end
 
-				d2 = distance_squared(dx, dy)
+				local d2 = distance_squared(dx, dy)
 
 				if d2 <= BALL_POLE_D2 then
 					if not w.hidden then
@@ -1281,26 +1297,24 @@ function cpu_target_ball(player_ball, next_wicket, wicket_targeting_thru, wrong_
 			local d_ball_target = distance(dx_target, b.y - ty)
 
 			local score = d_ball_self + d_ball_target
-			-- check for overflow
-			if score > 0 then
-				score -= d_self_target
-				assert(score > 0)
-				score += min(d_ball_self, 2 * d_ball_target)
-				assert(score > 0)
+			assert(score > 0) -- check overflow didn't happen
+			score -= d_self_target
+			assert(score > 0)
+			score += min(d_ball_self, 2 * d_ball_target)
+			assert(score > 0)
 
-				-- Penalize if other ball is on wrong side of target, unless we can shoot it through (or we're also on wrong side)
-				local can_shoot_through = abs(dy_self_target) < 5 and abs(dy_ball) < 10
-				if not (next_wicket.pole or wrong_side or can_shoot_through) then
-					if ((not next_wicket.reverse) and dx_target > 2) score *= 2
-					if (next_wicket.reverse and dx_target < -2) score *= 2
-				end
+			-- Penalize if other ball is on wrong side of target, unless we can shoot it through (or we're also on wrong side)
+			local can_shoot_through = abs(dy_self_target) < 5 and abs(dy_ball) < 10
+			if not (next_wicket.pole or wrong_side or can_shoot_through) then
+				if ((not next_wicket.reverse) and dx_target > 2) score *= 2
+				if (next_wicket.reverse and dx_target < -2) score *= 2
+			end
 
-				b.cpu_target_score = score
+			b.cpu_target_score = score
 
-				if score < best_score then
-					-- This is the best candidate so far
-					target_ball, best_score = b, score
-				end
+			if score < best_score then
+				-- This is the best candidate so far
+				target_ball, best_score = b, score
 			end
 		end
 	end
