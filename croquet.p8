@@ -168,6 +168,7 @@ cpu_update = 0
 
 debug_last_dv = nil
 
+turbo = false
 debug_turbo = false
 debug_pause_physics = false
 debug_no_draw_tops = false
@@ -1592,7 +1593,7 @@ function _update60()
 	do_update()
 	local cpu_update_one = stat(1)
 
-	if debug_turbo then
+	if turbo or debug_turbo then
 		while stat(1) < (0.98 - cpu_draw - cpu_update_one) do
 			do_update()
 		end
@@ -1605,6 +1606,8 @@ function do_update()
 
 	local player = players[player_idx]
 	local player_ball, left, right, up, down, op, x = player.ball, btn(0), btn(1), btn(2), btn(3), btnp(4), btn(5)
+
+	turbo = player.cpu and x and btn(4)
 
 	if game_finished then
 		if (op) run()
