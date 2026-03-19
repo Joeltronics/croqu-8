@@ -738,6 +738,7 @@ function draw_game_finished()
 	local p3 = 0b1101011111111111
 
 	local colors = {1, 3, 12, 14, 9}
+	rectfill(0, 0, 127, 48, 9)
 	for idx = 1,#colors - 1 do
 		local col, y = (16 * colors[idx + 1]) + colors[idx], 12 * (idx - 1)
 
@@ -754,7 +755,7 @@ function draw_game_finished()
 		if (p.enabled) assert(p.finish_position)
 	end
 
-	local y = 49
+	local y = 50
 	print_centered('turns', 88, y, 7)
 	print_centered('shots', 112, y, 7)
 	y += 8
