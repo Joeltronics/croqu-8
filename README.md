@@ -1,4 +1,6 @@
-# Pico Croquet
+# All Star Croquet
+
+Play it online at: https://www.lexaloffle.com/bbs/?tid=155686
 
 License: Creative Commons BY-NC-SA 4.0
 
