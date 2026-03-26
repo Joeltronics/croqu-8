@@ -696,10 +696,7 @@ function draw_title_screen()
 
 		if not CAPTURE_LABEL_IMAGE then
 
-			local col = p.color_main
-			-- Print green player as white
-			if (col == 11) col = 7
-
+			local col = p.color_text
 			local label = DIFFICULTY_LABELS[p.cpu_difficulty+1]
 			if (not p.enabled) label, col = 'off', 6
 
@@ -776,10 +773,7 @@ function draw_game_finished()
 			print(i, 40, y, 7)
 		end
 
-		local col = player.color_main
-		-- Print green player as white
-		if (col == 11) col = 7
-		print_centered(DIFFICULTY_LABELS[player.cpu_difficulty+1], 64, y, col)
+		print_centered(DIFFICULTY_LABELS[player.cpu_difficulty+1], 64, y, player.color_text)
 
 		print_centered(player.total_turns, 88, y, 7)
 		print_centered(player.total_shots, 112, y, 7)
@@ -1493,15 +1487,22 @@ function _init()
 
 	for idx = 1,#PALETTES do
 		local palette = PALETTES[idx]
+
+		local color_main = palette[8]
+		local color_text = color_main
+		-- Print green as white
+		if (color_text == 11) color_text = 7
+
 		add(players, {
 			enabled=idx <= 4, -- Default to 4 players
 			-- cpu_difficulty: 0 = player, 1 = easiest, 4 = hardest
 			-- Default to 1 human player, others are medium difficulty
 			cpu_difficulty=idx > 1 and 2 or 0,
 			palette=palette,
-			color_main=palette[8],
+			color_main=color_main,
 			color_light=palette[14],
 			color_dark=palette[2],
+			color_text=color_text,
 			ball=nil,
 			selected_starting_point=false,
 			last_wicket_idx=1,
@@ -2226,6 +2227,10 @@ function _draw()
 	-- HUD
 	camera()
 	draw_status_bar()
+
+	if moving_cooldown <= 0 and player.cpu then
+		print_centered('cpu turn', 64, 1, player.color_text)
+	end
 
 	-- Debug text overlays
 	-- (Many of these are commented out to save tokens)
