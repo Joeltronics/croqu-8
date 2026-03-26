@@ -1290,8 +1290,7 @@ function cpu_target_ball(player_ball, next_wicket, wicket_targeting_thru, wrong_
 
 			local score = d_ball_self + d_ball_target
 			assert(score > 0) -- check overflow didn't happen
-			score -= d_self_target
-			assert(score > 0)
+			score = max(score - d_self_target, 0)
 			score += min(d_ball_self, 2 * d_ball_target)
 			assert(score > 0)
 
