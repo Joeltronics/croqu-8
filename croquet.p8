@@ -1991,7 +1991,7 @@ function draw_status_bar()
 			if p.finish_position <= 3 then
 				spr(48 + p.finish_position, x - 2, y1 - 1)
 			else
-				rectfill(x-1, y1-1, x+3, y1+5)
+				rectfill(x-1, y1-1, x+3, y1+5, 0)
 				print(p.finish_position, x, y1, 7)
 			end
 
