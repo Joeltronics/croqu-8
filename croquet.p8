@@ -278,7 +278,7 @@ function distance_squared(dx, dy)
 	local d2 = dx2 + dy2
 	if (d2 < dx2 or d2 < dy2) return 32767
 
-	assert(d2 >= 0)
+	-- assert(d2 >= 0)
 
 	return d2
 end
@@ -434,14 +434,14 @@ function check_wicket_collision(ball, w, dx, dy)
 		local nx, ny = dx / d, dy / d
 		coll.nx, coll.ny = nx, ny
 
-		assert(
-			-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
-			'dx=' .. dx ..
-			',dy=' .. dy ..
-			',d=' .. d ..
-			',nx=' .. nx ..
-			',ny=' .. ny
-		)
+		-- assert(
+		-- 	-1.01 < nx and nx < 1.01 and -1.01 < ny and ny < 1.01,
+		-- 	'dx=' .. dx ..
+		-- 	',dy=' .. dy ..
+		-- 	',d=' .. d ..
+		-- 	',nx=' .. nx ..
+		-- 	',ny=' .. ny
+		-- )
 
 		local vel_reduce = VELOCITY_REDUCE_WICKET_COLLISION
 		if (w.pole) vel_reduce = VELOCITY_REDUCE_POLE_COLLISION
@@ -531,7 +531,6 @@ function resolve_all_static_collisions_for_ball(ball)
 		-- On collision, we only move this ball, not the other
 		-- TODO: consolidate?
 		for b2 in all(balls) do
-			assert(b2)
 			if b2 != ball then
 
 				local dx, dy = ball.x - b2.x, ball.y - b2.y
@@ -748,9 +747,9 @@ function draw_game_finished()
 	end
 	fillp()
 
-	for p in all(players) do
-		if (p.enabled) assert(p.finish_position)
-	end
+	-- for p in all(players) do
+	-- 	if (p.enabled) assert(p.finish_position)
+	-- end
 
 	local y = 50
 	print_centered('turns', 88, y, 7)
@@ -1160,7 +1159,7 @@ function distance_to_line_segment(
 	local line_dx, line_dy = x2 - x1, y2 - y1
 
 	local d2 = distance_squared(line_dx, line_dy)
-	assert(d2 >= 0)
+	-- assert(d2 >= 0)
 	if (d2 == 0) return nil
 	local d = sqrt(d2)
 
@@ -1283,10 +1282,10 @@ function cpu_target_ball(player_ball, next_wicket, wicket_targeting_thru, wrong_
 			local d_ball_target = distance(dx_target, b.y - ty)
 
 			local score = d_ball_self + d_ball_target
-			assert(score > 0) -- check overflow didn't happen
+			if (DEBUG) assert(score > 0) -- check overflow didn't happen
 			score = max(score - d_self_target, 0)
 			score += min(d_ball_self, 2 * d_ball_target)
-			assert(score > 0)
+			if (DEBUG) assert(score > 0)
 
 			-- Penalize if other ball is on wrong side of target, unless we can shoot it through (or we're also on wrong side)
 			local can_shoot_through = abs(dy_self_target) < 5 and abs(dy_ball) < 10
@@ -1388,7 +1387,7 @@ function next_player()
 		if (player.enabled and not player.finish_position) break
 
 		n_iter += 1
-		assert(n_iter <= #players)
+		-- assert(n_iter <= #players)
 	end
 
 	if (not player.ball) reset_ball(player)
