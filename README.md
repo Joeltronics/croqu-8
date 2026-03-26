@@ -9,6 +9,8 @@ Includes some code by others (all CC4-BY-NC-SA):
 * Some physics code from pico pool by nusan, BBS cart #21797
 * pelogen_tri_low() from Pelogen by shiftalow, https://www.lexaloffle.com/bbs/?pid=75530#p
 
+This cartridge is under the token limit (barely), but over the compressed size limit, so to export as a .png cartridge it needs to be compressed with [Shrinko8](https://thisismypassport.github.io/shrinko8/)
+
 ## Controls
 
 * X + direction: Move camera
